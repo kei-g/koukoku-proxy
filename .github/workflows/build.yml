@@ -1,0 +1,91 @@
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          cache: npm
+          node-version: 20
+      - name: Upgrade npm
+        run: npm install npm@latest -g
+      - name: Setup modules
+        run: npm ci
+      - env:
+          CI: ${{ vars.CI }}
+        name: Preprocess
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs')
+            const evaluate = (source, map) => {
+              const current = { text: source }
+              const variableRE = /\$\{(?<expr>[^}]+)\}/g
+              while (current.matched = variableRE.exec(current.text)) {
+                const expr = current.matched?.groups?.expr
+                const keys = []
+                const values = []
+                for (const key in map) {
+                  keys.push(key)
+                  values.push(map[key])
+                }
+                keys.push(`return ${expr ?? current.matched[0]}`)
+                const func = new Function(...keys)
+                const value = func(...values).trim()
+                console.log(` \x1b[31m- \${${expr}}\x1b[m`)
+                console.log(` \x1b[32m+ ${value}\x1b[m`)
+                const array = [...current.text]
+                const rhs = array.splice(current.matched.index)
+                current.text = array.join('') + value + rhs.slice(current.matched[0].length).join('')
+              }
+              console.log(`\x1b[32m+ ${current.text}\x1b[m`)
+              return current.text
+            }
+            const globber = await glob.create('src/**/*.ts')
+            for (const name of await globber.glob())
+              fs.readFileSync(
+                name,
+                {},
+                (error, data) => {
+                  const source = data.toString()
+                  const text = source.split('\n').map(
+                    (line, index) => {
+                      console.log(`\x1b[33m${index}\x1b[m: ${line}`)
+                      const matched = line.match(/^(?<indent>\s*)(?<body>.+)\/\/#when\((?<expr>[^,]+),\s*(?<value>.+)\s*\)$/)
+                      if (matched) {
+                        const { groups } = matched
+                        const g = groups ?? {}
+                        if (eval(g.expr)) {
+                          console.log(`\x1b[31m- ${g.body}\x1b[m`)
+                          console.log(`\x1b[36m* ${g.value}\x1b[m`)
+                          const text = evaluate(g.value, g)
+                          console.log(`\x1b[33m${index}\x1b[m: \x1b[32m${text}\x1b[m`)
+                          return g.indent + text
+                        }
+                      }
+                      return line
+                    }
+                  )
+                  if (source !== text)
+                    fs.writeFileSync(name, {}, text)
+                }
+              )
+      - name: Build
+        run: npm run build
+      - name: Save the built binaries to cache
+        uses: actions/cache/save@v3
+        with:
+          key: ${{ github.job }}-${{ github.sha }}
+          path: |
+            lib/*.js
+            main.js
+name: Build
+on:
+  push:
+    branches:
+      - main

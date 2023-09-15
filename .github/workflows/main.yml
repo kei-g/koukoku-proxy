@@ -1,0 +1,69 @@
+jobs:
+  main:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    name: Run at once
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore the built binaries from cache
+        uses: actions/cache/restore@v3
+        with:
+          fail-on-cache-miss: true
+          key: build-${{ github.sha }}
+          path: |
+            lib/*.js
+            main.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+      - env:
+          CI: ${{ vars.CI }}
+          PERMIT_SEND: ${{ vars.PERMIT_SEND }}
+          PORT: ${{ vars.PORT }}
+          TOKEN: ${{ secrets.TOKEN }}
+        name: Send a request
+        uses: actions/github-script@v6
+        with:
+          result-encoding: string
+          script: |
+            const { CI, PORT, TOKEN } = process.env
+            const cp = require('child_process')
+            const server = cp.spawn('node', ['main.js'])
+            const list = await new Promise(
+              resolve => setTimeout(
+                async () => {
+                  const http = require('http')
+                  const req = http.request(
+                    {
+                      headers: {
+                        'Authorization': `TOKEN ${TOKEN}`,
+                        'Content-Type': 'text/plain; charset=utf-8',
+                        'User-Agent': `Node.js ${process.version}`,
+                      },
+                      host: 'localhost',
+                      method: 'POST',
+                      path: '/ci/github',
+                      port: Number(PORT),
+                      protocol: 'http:',
+                    }
+                  )
+                  const list = []
+                  req.on('data', data => list.push(data))
+                  const client = new Promise(resolve => req.on('end', resolve))
+                  req.write(CI)
+                  req.end()
+                  await client
+                },
+                1000
+              )
+            )
+            server.kill('SIGINT')
+            return Buffer.concat(list).toString()
+        timeout-minutes: 1
+name: Main
+on:
+  workflow_run:
+    types:
+      - completed
+    workflows:
+      - Build

@@ -1,0 +1,36 @@
+{
+  "author": {
+    "email": "km.8k6ce+github@gmail.com",
+    "name": "kei-g"
+  },
+  "description": "Proxy for telnets://koukoku.shadan.open.ad.jp",
+  "devDependencies": {
+    "@types/node": "^20.6.1",
+    "esbuild": "^0.19.3",
+    "esbuild-register": "^3.5.0",
+    "npm-run-all": "^4.1.5",
+    "rimraf": "^5.0.1",
+    "typescript": "^5.2.2"
+  },
+  "engines": {
+    "node": "^20.5.1"
+  },
+  "license": "BSD-3-Clause",
+  "main": "main.js",
+  "name": "@kei-g/koukoku-proxy",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "run-p build:*",
+    "build:main": "esbuild src/main.ts --bundle --format=cjs --minify --outfile=main.js --platform=node --target=es2022",
+    "build:tsc": "tsc",
+    "clean": "rimraf lib/ main.d.ts main.js",
+    "delete": "rimraf *.md .git* .editorconfig .npmignore .vscode/ LICENSE node_modules/ src/",
+    "deploy": "run-s build:main delete",
+    "prebuild": "run-s clean",
+    "prepublishOnly": "run-s build",
+    "start": "test -r main.js && node main.js || node --require esbuild-register src/main.ts"
+  },
+  "version": "1.0.0"
+}
