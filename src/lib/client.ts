@@ -21,6 +21,7 @@ export class KoukokuClient implements AsyncDisposable {
   #connected(): void {
     process.stdout.write(`[telnet] connected to ${this.#socket.remoteAddress}\n`)
     this.#socket.write('nobody\r\n')
+    this.#timeouts.add(setInterval(() => this.#socket.write('ping\r\n'), 15000))
   }
 
   #dequeue(): void {
