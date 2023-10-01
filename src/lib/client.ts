@@ -2,6 +2,7 @@ import { KoukokuParser } from '.'
 import { TLSSocket, connect as connectSecure } from 'tls'
 
 type Chat = {
+  isSpeech: boolean
   message: string
   resolve: (value: object) => void
   timestamp: number
@@ -32,8 +33,14 @@ export class KoukokuClient implements AsyncDisposable {
       process.stdout.write(`[client] \x1b[32m${item.message}\x1b[m is dequeued\n`)
       process.stdout.write(`[client] this item has been enqueued at ${timestamp}\n`)
       process.stdout.uncork()
-      this.#sent.push(item)
-      this.#socket.write(item.message + '\r\n')
+      if (item.isSpeech) {
+        this.#socket.write(item.message + '\r\n')
+        item.resolve({ result: true })
+      }
+      else {
+        this.#sent.push(item)
+        this.#socket.write(item.message + '\r\n')
+      }
       if (this.#queue.length)
         this.#dequeueLater()
     }
@@ -91,6 +98,7 @@ export class KoukokuClient implements AsyncDisposable {
     return new Promise(
       (resolve: (value: object) => void) => {
         const item = {
+          isSpeech: /^https?:\/\/[.-/\w]+$/.test(text),
           message: text,
           resolve,
           timestamp: Date.now(),
