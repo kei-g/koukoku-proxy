@@ -29,9 +29,9 @@ jobs:
             const { CI, PORT, TOKEN } = process.env
             const cp = require('child_process')
             const server = cp.spawn('node', ['main.js'])
-            const list = await new Promise(
+            const response = await new Promise(
               resolve => setTimeout(
-                async () => {
+                () => {
                   const http = require('http')
                   const req = http.request(
                     {
@@ -47,18 +47,19 @@ jobs:
                       protocol: 'http:',
                     }
                   )
-                  const list = []
-                  req.on('data', data => list.push(data))
-                  const client = new Promise(resolve => req.on('end', resolve))
+                  req.on('response', res => {
+                    const list = []
+                    res.on('data', data => list.push(data))
+                    res.on('end', () => resolve(Buffer.concat(list).toString()))
+                  })
                   req.write(CI)
                   req.end()
-                  await client
                 },
                 1000
               )
             )
             server.kill('SIGINT')
-            return Buffer.concat(list).toString()
+            return response
         timeout-minutes: 1
 name: Main
 on:
