@@ -15,22 +15,26 @@ export class KoukokuParser implements Disposable {
   #messages = [] as BufferWithTimestamp[]
   #speeches = [] as BufferWithTimestamp[]
 
-  #parse(): void {
-    const text = Buffer.concat(this.#messages).toString().replaceAll(/\r?\n/g, '')
-    process.stdout.write(`[parser] '${text}'\n`)
-    const last = {} as { offset?: number }
+  #countByteLength(text: string): number {
+    const last = { offset: Number.NaN } as { offset: number }
     for (const matched of text.matchAll(MessageRE)) {
       dumpMatched(matched, process.stdout)
-      const { groups, index } = matched
-      if (groups) {
-        const { msg, self } = groups
-        if (self)
-          this.#emitter.emit('self', msg)
-        last.offset = (index ?? Number.NaN) + matched[0].length
-      }
+      this.#emitIfSelf('self', matched)
+      last.offset = (matched.index ?? Number.NaN) + matched[0].length
     }
-    const { byteLength } = Buffer.from(text.slice(0, last.offset ?? 0))
-    const ctx = { count: 0, offset: 0 } as FindTailContext
+    return isNaN(last.offset) ? 0 : Buffer.from(text.slice(0, last.offset)).byteLength
+  }
+
+  #emitIfSelf(eventName: 'self', matched: RegExpMatchArray): void {
+    const { groups } = matched
+    if (groups) {
+      const { msg, self } = groups
+      if (self)
+        this.#emitter.emit(eventName, msg)
+    }
+  }
+
+  #findTail(ctx: FindTailContext, byteLength: number): void {
     for (const data of this.#messages) {
       const next = ctx.offset + data.byteLength
       if (byteLength < next) {
@@ -40,6 +44,14 @@ export class KoukokuParser implements Disposable {
       ctx.count++
       ctx.offset = next
     }
+  }
+
+  #parse(): void {
+    const text = Buffer.concat(this.#messages).toString().replaceAll(/\r?\n/g, '')
+    process.stdout.write(`[parser] '${text}'\n`)
+    const byteLength = this.#countByteLength(text)
+    const ctx = { count: 0, offset: 0 } as FindTailContext
+    this.#findTail(ctx, byteLength)
     if (ctx.count)
       this.#messages = this.#messages.splice(ctx.count)
     if (this.#messages.length && ctx.pos) {
@@ -74,12 +86,12 @@ export class KoukokuParser implements Disposable {
 
 const MessageRE = />>\s「\s(?<msg>[^」]+)\s」\(チャット放話\s-\s(?<date>\d\d\/\d\d\s\([^)]+\))\s(?<time>\d\d:\d\d:\d\d)\sby\s(?<host>[^\s]+)\s君(\s(?<self>〈＊あなた様＊〉))?\)\s<</g
 
-const dumpBuffer = (data: Buffer, to: NodeJS.WriteStream): void => {
-  const list = [] as string[]
-  for (const c of data)
-    list.push(('0' + c.toString(16)).slice(-2))
-  to.write(list.join(' ') + '\n')
-}
+const byteToHex = (value: number): string => ('0' + value.toString(16)).slice(-2)
+
+const dumpBuffer = (data: Buffer, to: NodeJS.WriteStream): void => (
+  to.write([...data].map(byteToHex).join(' ') + '\n'),
+  undefined
+)
 
 const dumpMatched = (matched: RegExpMatchArray, to: NodeJS.WriteStream): void => {
   const { groups } = matched

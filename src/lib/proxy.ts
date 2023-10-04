@@ -60,12 +60,8 @@ const dumpRequest = (request: IncomingMessage, to: NodeJS.WriteStream) => {
   if (!request.url?.startsWith('/health') && request.url !== '/ping') {
     to.cork()
     to.write(`[http] ${request.method} ${request.url} HTTP/${request.httpVersion} from ${request.socket.remoteAddress}\n`)
-    request.rawHeaders.reduce(
-      (ctx: string[], raw: string, index: number) => (ctx.push(index % 2 ? `${ctx.pop()}: ${raw}` : raw), ctx),
-      [] as string[]
-    ).forEach(
-      (raw: string) => to.write(`| ${raw}\n`)
-    )
+    for (const pair of tuple(request.rawHeaders))
+      to.write(`| ${pair[0]}: ${pair[1]}\n`)
     to.uncork()
   }
 }
@@ -77,3 +73,8 @@ const readRequestAsync = (request: IncomingMessage) => new Promise(
     request.on('end', () => resolve(Buffer.concat(list)))
   }
 )
+
+function* tuple<T>(list: T[]): Iterable<[T, T]> {
+  for (let i = 0; i < list.length; i += 2)
+    yield [list[i], list[i + 1]]
+}
