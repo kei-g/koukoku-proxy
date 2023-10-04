@@ -1,3 +1,4 @@
+import { Action } from '../types'
 import { IncomingMessage, Server, ServerResponse, createServer } from 'http'
 import { KoukokuClient } from '.'
 
@@ -70,7 +71,7 @@ const dumpRequest = (request: IncomingMessage, to: NodeJS.WriteStream) => {
 }
 
 const readRequestAsync = (request: IncomingMessage) => new Promise(
-  (resolve: (value: Buffer) => void) => {
+  (resolve: Action<Buffer>) => {
     const list = [] as Buffer[]
     request.on('data', (data: Buffer) => list.push(data))
     request.on('end', () => resolve(Buffer.concat(list)))

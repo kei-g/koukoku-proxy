@@ -1,3 +1,4 @@
+import { Action } from './types'
 import { KoukokuProxy } from './lib'
 
 const main = async () => {
@@ -21,7 +22,7 @@ const parseIntOr = (text: string | undefined, alternateValue: number) => {
 }
 
 const waitForSignalAsync = (signal: NodeJS.Signals) => new Promise(
-  (resolve: (signal: NodeJS.Signals) => void) => process.on(signal, resolve)
+  (resolve: Action<NodeJS.Signals>) => process.on(signal, resolve)
 )
 
 main()

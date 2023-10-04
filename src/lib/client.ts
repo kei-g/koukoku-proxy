@@ -1,10 +1,11 @@
+import { Action } from '../types'
 import { KoukokuParser } from '.'
 import { TLSSocket, connect as connectSecure } from 'tls'
 
 type Chat = {
   isSpeech: boolean
   message: string
-  resolve: (value: object) => void
+  resolve: Action<object>
   timestamp: number
 }
 
@@ -96,7 +97,7 @@ export class KoukokuClient implements AsyncDisposable {
 
   sendAsync(text: string): Promise<object> {
     return new Promise(
-      (resolve: (value: object) => void) => {
+      (resolve: Action<object>) => {
         const item = {
           isSpeech: /^https?:\/\/[.-/\w]+$/.test(text),
           message: text,
@@ -112,8 +113,8 @@ export class KoukokuClient implements AsyncDisposable {
 
   async [Symbol.asyncDispose](): Promise<void> {
     this.#socket.removeAllListeners()
-    const task = new Promise<void>(
-      (resolve: () => void) => this.#socket.end(resolve)
+    const task = new Promise(
+      (resolve: Action<void>) => this.#socket.end(resolve)
     )
     this.#parser[Symbol.dispose]()
     const notifyShutdown = (item: Chat) => item.resolve({ error: { message: 'server shutdown' } })

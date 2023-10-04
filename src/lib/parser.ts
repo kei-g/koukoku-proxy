@@ -1,3 +1,4 @@
+import { Action, BufferWithTimestamp } from '../types'
 import { EventEmitter } from 'events'
 
 type FindTailContext = FindTailResult & {
@@ -11,8 +12,8 @@ type FindTailResult = {
 
 export class KoukokuParser implements Disposable {
   readonly #emitter = new EventEmitter()
-  #messages = [] as (Buffer & { timestamp: number })[]
-  #speeches = [] as (Buffer & { timestamp: number })[]
+  #messages = [] as BufferWithTimestamp[]
+  #speeches = [] as BufferWithTimestamp[]
 
   #parse(): void {
     const text = Buffer.concat(this.#messages).toString().replaceAll(/\r?\n/g, '')
@@ -42,19 +43,19 @@ export class KoukokuParser implements Disposable {
     if (ctx.count)
       this.#messages = this.#messages.splice(ctx.count)
     if (this.#messages.length && ctx.pos) {
-      const head = this.#messages[0].subarray(ctx.pos) as (Buffer & { timestamp: number })
+      const head = this.#messages[0].subarray(ctx.pos) as BufferWithTimestamp
       head.timestamp = this.#messages[0].timestamp
       this.#messages[0] = head
     }
   }
 
-  on(eventName: 'self', listener: (text: string) => void): this {
+  on(eventName: 'self', listener: Action<string>): this {
     this.#emitter.on(eventName, listener)
     return this
   }
 
   write(data: Buffer): void {
-    const obj = Buffer.of(...data) as (Buffer & { timestamp: number })
+    const obj = Buffer.of(...data) as BufferWithTimestamp
     obj.timestamp = Date.now()
     if (data.byteLength < 70)
       this.#speeches.push(obj)
@@ -73,14 +74,14 @@ export class KoukokuParser implements Disposable {
 
 const MessageRE = />>\s「\s(?<msg>[^」]+)\s」\(チャット放話\s-\s(?<date>\d\d\/\d\d\s\([^)]+\))\s(?<time>\d\d:\d\d:\d\d)\sby\s(?<host>[^\s]+)\s君(\s(?<self>〈＊あなた様＊〉))?\)\s<</g
 
-const dumpBuffer = (data: Buffer, to: NodeJS.WriteStream) => {
+const dumpBuffer = (data: Buffer, to: NodeJS.WriteStream): void => {
   const list = [] as string[]
   for (const c of data)
     list.push(('0' + c.toString(16)).slice(-2))
   to.write(list.join(' ') + '\n')
 }
 
-const dumpMatched = (matched: RegExpMatchArray, to: NodeJS.WriteStream) => {
+const dumpMatched = (matched: RegExpMatchArray, to: NodeJS.WriteStream): void => {
   const { groups } = matched
   const list = [] as string[]
   for (const name in groups)
