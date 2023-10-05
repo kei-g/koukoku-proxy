@@ -78,11 +78,26 @@ export class KoukokuClient implements AsyncDisposable {
   }
 
   #unbind(text: string): void {
-    process.stdout.write(`[client] unbind(${text})\n`)
-    const item = this.#sent.shift()
-    if (item) {
-      process.stdout.write(`[client] ${JSON.stringify(item)}\n`)
-      item.resolve({ result: true })
+    process.stdout.write(`[client] unbind("\x1b[32m${text}\x1b[m")\n`)
+    const trimmed = text.replaceAll(/\s+/g, '')
+    const index = this.#sent.findIndex(
+      (chat: Chat) => chat.message.replaceAll(/\s+/g, '') === trimmed
+    )
+    process.stdout.write(`[client] unbinding "\x1b[32m${trimmed}\x1b[m", found at index of ${index}\n`)
+    if (0 <= index) {
+      const rhs = this.#sent.splice(index)
+      const items = rhs.splice(0)
+      if (rhs.length)
+        this.#sent.push(...rhs)
+      for (const item of items) {
+        const obj = {
+          isSpeech: item.isSpeech,
+          message: item.message,
+          timestamp: new Date(item.timestamp).toLocaleString('ja'),
+        }
+        process.stdout.write(`[client] resolve(${JSON.stringify(obj)})\n`)
+        item.resolve({ result: true })
+      }
     }
   }
 

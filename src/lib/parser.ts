@@ -38,7 +38,9 @@ export class KoukokuParser implements Disposable {
     for (const data of this.#messages) {
       const next = ctx.offset + data.byteLength
       if (byteLength < next) {
-        ctx.pos = byteLength - ctx.offset
+        const pos = byteLength - ctx.offset
+        const index = data.subarray(pos).indexOf('>> 「 ')
+        ctx.pos = index < 0 ? pos : index
         break
       }
       ctx.count++
