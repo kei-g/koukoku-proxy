@@ -108,6 +108,7 @@ export class KoukokuClient implements AsyncDisposable {
     this.#socket.on('close', this.#reconnect.bind(this))
     this.#socket.on('data', this.#read.bind(this))
     this.#socket.on('error', this.#catch.bind(this))
+    this.#socket.setNoDelay(true)
     this.#socket.setKeepAlive(true, 15000)
   }
 
