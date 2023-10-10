@@ -10,20 +10,43 @@ type Chat = {
 }
 
 export class KoukokuClient implements AsyncDisposable {
+  readonly #host: string
   readonly #parser = new KoukokuParser()
+  readonly #port: number
   readonly #queue = [] as Chat[]
   readonly #sent = [] as Chat[]
-  readonly #socket: TLSSocket
+  #socket: TLSSocket
   readonly #timeouts = new Set<NodeJS.Timeout>()
 
   #catch(error: Error): void {
     process.stdout.write(`[telnet] ${error.message}\n`)
   }
 
+  #connect(): TLSSocket {
+    const opts = {
+      host: this.#host,
+      port: this.#port,
+      rejectUnauthorized: true
+    }
+    const socket = connectSecure(opts, this.#connected.bind(this))
+    socket.on('close', this.#disconnected.bind(this))
+    socket.on('data', this.#read.bind(this))
+    socket.on('error', this.#catch.bind(this))
+    socket.setNoDelay(true)
+    socket.setKeepAlive(true, 15000)
+    return socket
+  }
+
   #connected(): void {
     process.stdout.write(`[telnet] connected to ${this.#socket.remoteAddress}\n`)
     this.#socket.write('nobody\r\n')
     this.#timeouts.add(setInterval(() => this.#socket.write('ping\r\n'), 15000))
+  }
+
+  #disconnected(hadError: boolean): void {
+    process.stdout.write(`[telnet] disconnected with${['out', ''][+hadError]} error\n`)
+    this.#socket.removeAllListeners()
+    this.#socket = this.#connect()
   }
 
   async #dequeueAsync(): Promise<void> {
@@ -74,10 +97,6 @@ export class KoukokuClient implements AsyncDisposable {
     }
   }
 
-  #reconnect(hadError: boolean): void {
-    process.stdout.write(`[telnet] disconnected with${['out', ''][+hadError]} error\n`)
-  }
-
   #unbind(text: string): void {
     process.stdout.write(`[client] unbind("\x1b[32m${text}\x1b[m")\n`)
     const trimmed = text.replaceAll(/\s+/g, '')
@@ -112,14 +131,10 @@ export class KoukokuClient implements AsyncDisposable {
   }
 
   constructor(host: string = 'koukoku.shadan.open.ad.jp', port: number = 992) {
+    this.#host = host
     this.#parser.on('self', this.#unbind.bind(this))
-    const opts = { host, port, rejectUnauthorized: true }
-    this.#socket = connectSecure(opts, this.#connected.bind(this))
-    this.#socket.on('close', this.#reconnect.bind(this))
-    this.#socket.on('data', this.#read.bind(this))
-    this.#socket.on('error', this.#catch.bind(this))
-    this.#socket.setNoDelay(true)
-    this.#socket.setKeepAlive(true, 15000)
+    this.#port = port
+    this.#socket = this.#connect()
   }
 
   sendAsync(text: string): Promise<object> {
