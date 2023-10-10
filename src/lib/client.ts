@@ -26,7 +26,7 @@ export class KoukokuClient implements AsyncDisposable {
     this.#timeouts.add(setInterval(() => this.#socket.write('ping\r\n'), 15000))
   }
 
-  #dequeue(): void {
+  async #dequeueAsync(): Promise<void> {
     const item = this.#queue.shift()
     if (item) {
       const timestamp = new Date(item.timestamp).toLocaleString('ja')
@@ -34,14 +34,15 @@ export class KoukokuClient implements AsyncDisposable {
       process.stdout.write(`[client] \x1b[32m${item.message}\x1b[m is dequeued\n`)
       process.stdout.write(`[client] this item has been enqueued at ${timestamp}\n`)
       process.stdout.uncork()
-      if (item.isSpeech) {
-        this.#socket.write(item.message + '\r\n')
-        item.resolve({ result: true })
-      }
-      else {
-        this.#sent.push(item)
-        this.#socket.write(item.message + '\r\n')
-      }
+      const result = await this.#writeAsync(item.message)
+      const template = [
+        this.#queue.unshift.bind(this.#queue, item),
+        this.#sent.push.bind(this.#sent, item),
+        item.resolve.bind(globalThis, { error: result.toString(), result: false }),
+        item.resolve.bind(globalThis, { result }),
+      ]
+      const index = +item.isSpeech * 2 + +(result === true)
+      template[index]()
       if (this.#queue.length)
         this.#dequeueLater()
     }
@@ -56,9 +57,9 @@ export class KoukokuClient implements AsyncDisposable {
 
   #dequeueLater(milliseconds: number = 992): void {
     const timeout = setTimeout(
-      () => {
+      async () => {
         this.#timeouts.delete(timeout)
-        this.#dequeue()
+        await this.#dequeueAsync()
       },
       milliseconds
     )
