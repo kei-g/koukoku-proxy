@@ -101,9 +101,18 @@ export class KoukokuClient implements AsyncDisposable {
     }
   }
 
+  #writeAsync(text: string): Promise<Error | true> {
+    return new Promise(
+      (resolve: Action<Error | true>) => this.#socket.write(
+        text + '\r\n',
+        (error?: Error) => resolve(error ?? true)
+      )
+    )
+  }
+
   constructor(host: string = 'koukoku.shadan.open.ad.jp', port: number = 992) {
     this.#parser.on('self', this.#unbind.bind(this))
-    const opts = { host, port, rejectUnauthorized: true, servername: host }
+    const opts = { host, port, rejectUnauthorized: true }
     this.#socket = connectSecure(opts, this.#connected.bind(this))
     this.#socket.on('close', this.#reconnect.bind(this))
     this.#socket.on('data', this.#read.bind(this))
