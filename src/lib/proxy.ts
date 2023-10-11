@@ -16,9 +16,10 @@ export class KoukokuProxy implements AsyncDisposable {
       response.write('\n')
     }
     else if (request.url === '/ping') {
-      response.setHeader('Content-Type', 'text/plain')
+      const headers = cerateMapFromRawHeaders(request)
+      response.setHeader('Content-Type', 'application/json')
       response.statusCode = 200
-      response.write('pong')
+      response.write(JSON.stringify({ pong: headers.get('X-Request-Start') }))
     }
     else
       response.statusCode = 204
@@ -54,6 +55,13 @@ export class KoukokuProxy implements AsyncDisposable {
     this.#web.close()
     await task
   }
+}
+
+const cerateMapFromRawHeaders = (request: IncomingMessage): Map<string, string> => {
+  const map = new Map<string, string>()
+  for (const pair of tuple(request.rawHeaders))
+    map.set(pair[0], pair[1])
+  return map
 }
 
 const dumpRequest = (request: IncomingMessage, to: NodeJS.WriteStream) => {
