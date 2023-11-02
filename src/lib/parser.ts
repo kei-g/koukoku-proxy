@@ -28,9 +28,9 @@ export class KoukokuParser implements Disposable {
   #emitIfSelf(eventName: 'self', matched: RegExpMatchArray): void {
     const { groups } = matched
     if (groups) {
-      const { msg, self } = groups
+      const { body, self } = groups
       if (self)
-        this.#emitter.emit(eventName, msg)
+        this.#emitter.emit(eventName, body)
     }
   }
 
@@ -86,7 +86,7 @@ export class KoukokuParser implements Disposable {
   }
 }
 
-const MessageRE = />>\s「\s(?<msg>[^」]+)\s」\(チャット放話\s-\s(?<date>\d\d\/\d\d\s\([^)]+\))\s(?<time>\d\d:\d\d:\d\d)\sby\s(?<host>[^\s]+)\s君(\s(?<self>〈＊あなた様＊〉))?\)\s<</g
+const MessageRE = />>\s「\s(?<body>[^」]+)\s」\(チャット放話\s-\s(?<date>\d\d\/\d\d)\s\((?<dow>[日月火水木金土])\)\s(?<time>\d\d:\d\d:\d\d)\sby\s(?<host>[^\s]+)(\s\((?<forgery>※\s贋作\sDNS\s逆引の疑い)\))?\s君(\s(?<self>〈＊あなた様＊〉))?\)\s<</g
 
 const byteToHex = (value: number): string => ('0' + value.toString(16)).slice(-2)
 
