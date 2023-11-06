@@ -29,7 +29,7 @@
     "build:main": "esbuild src/main.ts --bundle --format=cjs --minify --outfile=main.js --platform=node --target=es2022",
     "build:tsc": "tsc",
     "clean": "rimraf lib/ main.d.ts main.js types/",
-    "delete": "rimraf *.md .git* .editorconfig .npmignore .vscode/ LICENSE node_modules/ src/",
+    "delete": "rimraf *.md .cspell.json .editorconfig .eslintrc.json .git* .npmignore .vscode/ LICENSE node_modules/ package-lock.json src/",
     "deploy": "run-s build:main delete",
     "lint": "eslint src/**/*.ts",
     "prebuild": "run-s clean",
