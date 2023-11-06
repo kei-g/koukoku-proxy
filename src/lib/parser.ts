@@ -12,8 +12,8 @@ type FindTailResult = {
 
 export class KoukokuParser implements Disposable {
   readonly #emitter = new EventEmitter()
-  #messages = [] as BufferWithTimestamp[]
-  #speeches = [] as BufferWithTimestamp[]
+  readonly #messages = [] as BufferWithTimestamp[]
+  readonly #speeches = [] as BufferWithTimestamp[]
 
   #countByteLength(text: string): number {
     const last = { offset: Number.NaN } as { offset: number }
@@ -55,7 +55,7 @@ export class KoukokuParser implements Disposable {
     const ctx = { count: 0, offset: 0 } as FindTailContext
     this.#findTail(ctx, byteLength)
     if (ctx.count)
-      this.#messages = this.#messages.splice(ctx.count)
+      this.#messages.splice(ctx.count)
     if (this.#messages.length && ctx.pos) {
       const head = this.#messages[0].subarray(ctx.pos) as BufferWithTimestamp
       head.timestamp = this.#messages[0].timestamp
