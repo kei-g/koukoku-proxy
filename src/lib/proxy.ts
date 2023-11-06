@@ -16,7 +16,7 @@ export class KoukokuProxy implements AsyncDisposable {
       response.write('\n')
     }
     else if (request.url === '/ping') {
-      const headers = cerateMapFromRawHeaders(request)
+      const headers = createMapFromRawHeaders(request)
       response.setHeader('Content-Type', 'application/json')
       response.statusCode = 200
       response.write(JSON.stringify({ pong: headers.get('X-Request-Start') }))
@@ -57,7 +57,7 @@ export class KoukokuProxy implements AsyncDisposable {
   }
 }
 
-const cerateMapFromRawHeaders = (request: IncomingMessage): Map<string, string> => {
+const createMapFromRawHeaders = (request: IncomingMessage): Map<string, string> => {
   const map = new Map<string, string>()
   for (const pair of tuple(request.rawHeaders))
     map.set(pair[0], pair[1])
