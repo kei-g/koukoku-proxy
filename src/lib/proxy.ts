@@ -39,8 +39,8 @@ export class KoukokuProxy implements AsyncDisposable {
     }
     else {
       response.setHeader('Content-Type', 'text/plain')
-      response.statusCode = 504
-      response.write('Bad token')
+      response.statusCode = 403
+      response.write('Forbidden')
     }
   }
 
