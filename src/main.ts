@@ -1,19 +1,23 @@
-import { Action } from './types'
-import { KoukokuProxy } from './lib'
+import { AsyncWriter, KoukokuProxy } from './lib'
 
 const main = async () => {
-  const port = parseIntOr(process.env.PORT, 80)
-  process.stdout.write(`process is running on pid:\x1b[33m${process.pid}\x1b[m\n\n`)
-  await using _proxy = new KoukokuProxy(port)
-  await Promise.race(
-    [
-      waitForSignalAsync('SIGABRT'),
-      waitForSignalAsync('SIGHUP'),
-      waitForSignalAsync('SIGINT'),
-      waitForSignalAsync('SIGQUIT'),
-      waitForSignalAsync('SIGTERM'),
-    ]
-  )
+  const { env, pid } = process
+  const port = parseIntOr(env.PORT, 80)
+  {
+    await using stdout = new AsyncWriter()
+    stdout.write(`process is running on pid \x1b[33m${pid}\x1b[m\n\n`)
+    const array = [] as [string, string | undefined][]
+    for (const name in env)
+      array.push([name, env[name]?.replaceAll('\x1b', '\\x1b')])
+    array.sort((lhs: [string, unknown], rhs: [string, unknown]) => lhs[0] < rhs[0] ? -1 : 1)
+    stdout.write('----\n')
+    for (const [name, value] of array)
+      stdout.write(`${name}=${value}\n`)
+    stdout.write('----\n')
+  }
+  await using proxy = new KoukokuProxy(port)
+  await proxy.start()
+  await waitForSignals('SIGABRT', 'SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGTERM')
 }
 
 const parseIntOr = (text: string | undefined, alternateValue: number) => {
@@ -21,15 +25,18 @@ const parseIntOr = (text: string | undefined, alternateValue: number) => {
   return [value, alternateValue][+isNaN(value)]
 }
 
-const waitForSignalAsync = (signal: NodeJS.Signals) => new Promise(
-  (resolve: Action<NodeJS.Signals>) => process.on(signal, resolve)
+const waitForSignals = (...signals: NodeJS.Signals[]) => Promise.race(
+  signals.map(
+    (signal: NodeJS.Signals) => new Promise(process.on.bind(process, signal))
+  )
 )
 
 main()
-  .then(() => process.exit(0))
+  .then(
+    process.exit.bind(process, 0)
+  )
   .catch(
-    (reason: unknown) => {
-      process.stdout.write(`[uncaught error] ${reason instanceof Error ? reason.message : reason}\n`)
-      process.exit(1)
-    }
+    (reason: unknown) => process.stdout.write(`[uncaught error] ${reason instanceof Error ? reason.message : reason}\n`)
+  ).finally(
+    process.exit.bind(process, 1)
   )

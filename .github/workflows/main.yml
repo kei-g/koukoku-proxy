@@ -10,6 +10,8 @@ jobs:
           fail-on-cache-miss: true
           key: build-${{ github.sha }}
           path: |
+            assets
+            conf
             lib/*.js
             main.js
       - name: Setup Node.js

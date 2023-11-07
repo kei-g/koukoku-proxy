@@ -1,5 +1,5 @@
 import { Action } from '../types'
-import { KoukokuParser } from '.'
+import { AsyncWriter, KoukokuParser } from '.'
 import { TLSSocket, connect as connectSecure } from 'tls'
 
 type Chat = {
@@ -10,19 +10,21 @@ type Chat = {
 }
 
 export class KoukokuClient implements AsyncDisposable {
+  readonly #commit: string | undefined
   readonly #host: string
   readonly #parser = new KoukokuParser()
   readonly #port: number
   readonly #queue = [] as Chat[]
   readonly #sent = [] as Chat[]
-  #socket: TLSSocket
+  readonly #socket = new WeakMap<this, TLSSocket>()
   readonly #timeouts = new Set<NodeJS.Timeout>()
 
-  #catch(error: Error): void {
-    process.stdout.write(`[telnet] ${error.message}\n`)
+  async #catch(error: Error): Promise<void> {
+    await using stdout = new AsyncWriter()
+    stdout.write(`[telnet] ${error.message}\n`)
   }
 
-  #connect(): TLSSocket {
+  #connect(): void {
     const opts = {
       host: this.#host,
       port: this.#port,
@@ -34,30 +36,32 @@ export class KoukokuClient implements AsyncDisposable {
     socket.on('error', this.#catch.bind(this))
     socket.setNoDelay(true)
     socket.setKeepAlive(true, 15000)
-    return socket
+    this.#socket.set(this, socket)
   }
 
-  #connected(): void {
-    process.stdout.write(`[telnet] connected to ${this.#socket.remoteAddress}\n`)
-    this.#socket.write('nobody\r\n')
-    this.#timeouts.add(setInterval(() => this.#socket.write('ping\r\n'), 15000))
+  async #connected(): Promise<void> {
+    const socket = this.#socket.get(this)
+    await using writer = new AsyncWriter()
+    writer.write(`[telnet] connected to ${socket?.remoteAddress}\n`)
+    writer.write('nobody\r\n', socket)
+    this.#timeouts.add(setInterval(() => this.#socket.get(this)?.write('ping\r\n'), 15000))
   }
 
-  #disconnected(hadError: boolean): void {
-    process.stdout.write(`[telnet] disconnected with${['out', ''][+hadError]} error\n`)
-    this.#socket.removeAllListeners()
-    this.#socket = this.#connect()
+  async #disconnected(hadError: boolean): Promise<void> {
+    await using stdout = new AsyncWriter()
+    stdout.write(`[telnet] disconnected with${['out', ''][+hadError]} error\n`)
+    const socket = this.#socket.get(this)
+    socket?.removeAllListeners()
+    this.#connect()
   }
 
-  async #dequeueAsync(): Promise<void> {
+  async #dequeue(): Promise<void> {
     const item = this.#queue.shift()
+    await using stdout = new AsyncWriter()
     if (item) {
-      const timestamp = new Date(item.timestamp).toLocaleString('ja')
-      process.stdout.cork()
-      process.stdout.write(`[client] \x1b[32m${item.message}\x1b[m is dequeued\n`)
-      process.stdout.write(`[client] this item has been enqueued at ${timestamp}\n`)
-      process.stdout.uncork()
-      const result = await this.#writeAsync(item.message)
+      const timestamp = new Date(item.timestamp).toLocaleString('ja', { day: '2-digit', hour: '2-digit', minute: '2-digit', month: '2-digit', second: '2-digit', year: 'numeric' })
+      stdout.write(`[client] \x1b[32m${item.message}\x1b[m is dequeued\n[client] this item has been enqueued at ${timestamp}\n`)
+      const result = await this.#write(item.message)
       const template = [
         this.#queue.unshift.bind(this.#queue, item),
         this.#sent.push.bind(this.#sent, item),
@@ -70,10 +74,7 @@ export class KoukokuClient implements AsyncDisposable {
         this.#dequeueLater()
     }
     else {
-      process.stdout.cork()
-      process.stdout.write(`[client] there are ${this.#queue.length} items in queue\n`)
-      process.stdout.write(`[client] there is ${this.#sent.length} item in waiting response\n`)
-      process.stdout.uncork()
+      stdout.write(`[client] there are ${this.#queue.length} items in queue\n[client] there is ${this.#sent.length} item in waiting response\n`)
       this.#dequeueLater(3000)
     }
   }
@@ -82,28 +83,30 @@ export class KoukokuClient implements AsyncDisposable {
     const timeout = setTimeout(
       async () => {
         this.#timeouts.delete(timeout)
-        await this.#dequeueAsync()
+        await this.#dequeue()
       },
       milliseconds
     )
     this.#timeouts.add(timeout)
   }
 
-  #read(data: Buffer): void {
+  async #read(data: Buffer): Promise<void> {
+    await using stdout = new AsyncWriter()
     if (70 <= data.byteLength) {
-      process.stdout.write(`[telnet] ${data.byteLength} bytes received from ${this.#socket.remoteAddress}\n`)
-      process.stdout.write(data)
-      this.#parser.write(data)
+      const socket = this.#socket.get(this)
+      stdout.write(`[telnet] ${data.byteLength} bytes received from ${socket?.remoteAddress}\n`)
     }
+    this.#parser.write(data, stdout)
   }
 
-  #unbind(text: string): void {
-    process.stdout.write(`[client] unbind("\x1b[32m${text}\x1b[m")\n`)
+  async #unbind(text: string): Promise<void> {
+    await using stdout = new AsyncWriter()
+    stdout.write(`[client] unbind("\x1b[32m${text}\x1b[m")\n`)
     const trimmed = text.replaceAll(/\s+/g, '')
     const index = this.#sent.findIndex(
       (chat: Chat) => chat.message.replaceAll(/\s+/g, '') === trimmed
     )
-    process.stdout.write(`[client] unbinding "\x1b[32m${trimmed}\x1b[m", found at index of ${index}\n`)
+    stdout.write(`[client] unbinding "\x1b[32m${trimmed}\x1b[m", found at index of ${index}\n`)
     if (0 <= index) {
       const rhs = this.#sent.splice(index)
       const items = rhs.splice(0)
@@ -113,31 +116,35 @@ export class KoukokuClient implements AsyncDisposable {
         const obj = {
           isSpeech: item.isSpeech,
           message: item.message,
-          timestamp: new Date(item.timestamp).toLocaleString('ja'),
+          timestamp: new Date(item.timestamp).toLocaleString('ja', { day: '2-digit', hour: '2-digit', minute: '2-digit', month: '2-digit', second: '2-digit', year: 'numeric' }),
         }
-        process.stdout.write(`[client] resolve(${JSON.stringify(obj)})\n`)
-        item.resolve({ result: true })
+        stdout.write(`[client] resolve(${JSON.stringify(obj)})\n`)
+        item.resolve({ commit: this.#commit, result: true })
       }
     }
   }
 
-  #writeAsync(text: string): Promise<Error | true> {
-    return new Promise(
-      (resolve: Action<Error | true>) => this.#socket.write(
-        text + '\r\n',
-        (error?: Error) => resolve(error ?? true)
-      )
+  async #write(text: string): Promise<Error | true> {
+    const socket = this.#socket.get(this)
+    const maybeError = await new Promise(
+      (resolve: Action<Error | null | undefined>) => socket?.write(`${text}\r\n`, resolve) ?? resolve(undefined)
     )
+    return maybeError instanceof Error ? maybeError : true
   }
 
-  constructor(host: string = 'koukoku.shadan.open.ad.jp', port: number = 992) {
+  constructor(commit: string | undefined, host: string = 'koukoku.shadan.open.ad.jp', port: number = 992) {
+    this.#commit = commit
     this.#host = host
     this.#parser.on('self', this.#unbind.bind(this))
     this.#port = port
-    this.#socket = this.#connect()
+    this.#connect()
   }
 
-  sendAsync(text: string): Promise<object> {
+  on(_eventName: 'message' | 'speech', _listener: unknown): this {
+    return this
+  }
+
+  send(text: string): Promise<object> {
     return new Promise(
       (resolve: Action<object>) => {
         const item = {
@@ -147,22 +154,21 @@ export class KoukokuClient implements AsyncDisposable {
           timestamp: Date.now(),
         } as Chat
         this.#queue.push(item)
-        process.stdout.write(`[client] ${text} is enqueued\n`)
+        process.stdout.write(`[client] \x1b[32m${text}\x1b[m is enqueued\n`)
         this.#dequeueLater(0)
       }
     )
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    this.#socket.removeAllListeners()
-    const task = new Promise(
-      (resolve: Action<void>) => this.#socket.end(resolve)
-    )
+    const socket = this.#socket.get(this)
+    this.#socket.delete(this)
+    socket?.removeAllListeners()
+    await using _socket = new AsyncWriter(socket, true)
     this.#parser[Symbol.dispose]()
     const notifyShutdown = (item: Chat) => item.resolve({ error: { message: 'server shutdown' } })
     this.#queue.splice(0).forEach(notifyShutdown)
     this.#sent.splice(0).forEach(notifyShutdown)
     this.#timeouts.forEach((timeout: NodeJS.Timeout) => clearTimeout(timeout))
-    await task
   }
 }

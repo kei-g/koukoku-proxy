@@ -1,0 +1,9 @@
+{
+  "/": "text/html",
+  "css": "text/css",
+  "html": "text/html",
+  "ico": "image/vnd.microsoft.icon",
+  "js": "text/javascript",
+  "png": "image/png",
+  "webmanifest": "application/manifest+json"
+}

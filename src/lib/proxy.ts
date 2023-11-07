@@ -1,59 +1,210 @@
-import { Action } from '../types'
+import { Action, Item } from '../types'
+import { AsyncWriter, KoukokuClient, PromiseList, fnv1 } from '.'
 import { IncomingMessage, Server, ServerResponse, createServer } from 'http'
-import { KoukokuClient } from '.'
+import { WebSocket, WebSocketServer } from 'ws'
+import { join as joinPath } from 'path'
+import { readFile, readdir } from 'fs/promises'
+
+type Asset = {
+  data: Buffer
+  etag: string
+  mimeType: string
+}
 
 export class KoukokuProxy implements AsyncDisposable {
-  readonly #client = new KoukokuClient()
+  readonly #assets = new Map<string, Asset>()
+  readonly #client: KoukokuClient
+  readonly #commit: string | undefined
+  readonly #mimeTypes = new Map<string, string>()
   readonly #web: Server
+  readonly #webClients = new Set<WebSocket>()
+  readonly #webSocket: WebSocketServer
 
-  async #handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    dumpRequest(request, process.stdout)
-    if (request.headers.authorization?.startsWith('TOKEN'))
-      await this.#handleRequestWithToken(request, response)
-    else if (request.url?.startsWith('/health')) {
+  async #connected(client: WebSocket, request: IncomingMessage): Promise<void> {
+    await using stdout = new AsyncWriter()
+    stdout.write('[ws] connected\n\x1b[34m')
+    dumpRequest(request, stdout)
+    stdout.write('\x1b[m----\n')
+    client.on('close', this.#disconnected.bind(this, client))
+    this.#webClients.add(client)
+  }
+
+  async #disconnected(client: WebSocket, code: number, reason: Buffer): Promise<void> {
+    await using stdout = new AsyncWriter()
+    stdout.write(`[ws] disconnected, { code: \x1b[33m${code}\x1b[m, reason: '\x1b[32m${reason.toString()}\x1b[m' }\n`)
+    this.#webClients.delete(client)
+  }
+
+  async #dispatch(item: Item): Promise<void> {
+    const data = Buffer.from(JSON.stringify(item))
+    await using list = new PromiseList()
+    for (const client of this.#webClients)
+      list.push(new Promise((resolve: Action<Error | undefined>) => client.send(data, resolve)))
+  }
+
+  async #handlePostRequest(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
+    const { CI, PERMIT_SEND } = process.env
+    const list = [] as Buffer[]
+    request.on('data', list.push.bind(list))
+    const data = await new Promise(request.on.bind(request, 'end')).then(Buffer.concat.bind(this, list) as Action<void, Buffer>)
+    const text = data.toString()
+    writer.write(`[proxy] ${text}\n`)
+    const result = CI && PERMIT_SEND?.toLowerCase() !== 'yes' ? { commit: this.#commit, result: true } : await this.#client.send(text)
+    response.statusCode = 200
+    writer.write(JSON.stringify(result), response)
+  }
+
+  #handleRequest(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): void {
+    const { method, url } = request
+    if (url?.startsWith('/health')) {
       response.setHeader('Content-Type', 'text/plain')
       response.statusCode = 200
-      response.write('\n')
+      writer.write('\n', response)
     }
-    else if (request.url === '/ping') {
+    else if (url === '/ping') {
       const headers = createMapFromRawHeaders(request)
       response.setHeader('Content-Type', 'application/json')
       response.statusCode = 200
-      response.write(JSON.stringify({ pong: headers.get('X-Request-Start') }))
+      const time = Number(headers.get('X-Request-Start'))
+      writer.write(JSON.stringify({ pong: { commit: this.#commit, time } }), response)
     }
+    else if (['GET', 'HEAD'].includes(method as string))
+      this.#handleRequestForAsset(request.headers['if-none-match'], method, response, url, writer)
     else
-      response.statusCode = 204
-    response.end()
+      response.statusCode = 405
   }
 
-  async #handleRequestWithToken(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    if (request.headers.authorization?.split(' ').slice(1).join(' ') === process.env.TOKEN) {
-      const data = await readRequestAsync(request)
-      const text = data.toString()
-      process.stdout.write(`[proxy] ${text}\n`)
-      const { CI, PERMIT_SEND } = process.env
-      const result = CI && PERMIT_SEND?.toLowerCase() !== 'yes' ? { result: true } : await this.#client.sendAsync(text)
-      response.setHeader('Content-Type', 'application/json')
-      response.statusCode = 200
-      response.write(JSON.stringify(result))
+  #handleRequestForAsset(ifNoneMatch: string | undefined, method: string | undefined, response: ServerResponse, url: string | undefined, writer: AsyncWriter): void {
+    const asset = this.#assets.get(url as string)
+    if (asset) {
+      const { data, etag, mimeType } = asset
+      const { byteLength } = data
+      const oneIfNotModified = +(etag == ifNoneMatch)
+      const statusCode = [200, 304][oneIfNotModified]
+      writer.write(`${method} \x1b[32m${url} \x1b[33m${statusCode}\x1b[m\n`)
+      writer.write(`| Content-length: \x1b[33m${byteLength}\x1b[m\n`)
+      response.setHeader('Content-length', byteLength)
+      setHeaderIfPresent(response, 'Content-type', mimeType, writer)
+      writer.write(`| ETag: \x1b[32m'${etag}'\x1b[m\n`)
+      response.setHeader('ETag', etag)
+      response.statusCode = statusCode
+      const oneIfContentNecessary = oneIfNotModified * 2 + +(method === 'GET')
+      if (oneIfContentNecessary === 1)
+        writer.write(data, response)
     }
     else {
-      response.setHeader('Content-Type', 'text/plain')
-      response.statusCode = 403
-      response.write('Forbidden')
+      writer.write(`\x1b[31m${method} ${url} 404\x1b[m\n`)
+      response.statusCode = 404
     }
+  }
+
+  async #handleRequestWithToken(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
+    const { TOKEN } = process.env
+    response.setHeader('Content-Type', 'application/json')
+    const { headers, method } = request
+    if (headers.authorization?.split(' ').slice(1).join(' ') === TOKEN) {
+      if (method === 'POST')
+        await this.#handlePostRequest(request, response, writer)
+      else {
+        response.statusCode = 405
+        writer.write(JSON.stringify({ commit: this.#commit, message: 'Method not allowed', method }), response)
+      }
+    }
+    else {
+      response.statusCode = 403
+      writer.write(JSON.stringify({ commit: this.#commit, message: 'Forbidden' }), response)
+    }
+  }
+
+  async #loadAssets(): Promise<void> {
+    const hostname = process.env.RENDER_EXTERNAL_HOSTNAME as string
+    const dir = 'assets'
+    await using stdout = new AsyncWriter()
+    stdout.write('loading assets...\n')
+    for (const entry of await readdir(dir, { recursive: true, withFileTypes: true }))
+      if (entry.isFile()) {
+        const { name } = entry
+        const path = joinPath(dir, name)
+        const source = await readFile(path)
+        const ext = name.split('.').at(-1)
+        const mimeType = this.#mimeTypes.get(ext as string)
+        const data = isText(mimeType)
+          ? Buffer.from(source.toString().replaceAll(/\$\{host\}/g, hostname))
+          : source
+        const { byteLength } = data
+        const { checksum, etag } = computeETag(data)
+        const asset = { data, etag, mimeType } as Asset
+        stdout.write(`${name}: { \x1b[32m'${mimeType}'\x1b[m, \x1b[33m${byteLength}\x1b[m, \x1b[3m${checksum.toString(16)}\x1b[m, \x1b[32m'${etag}'\x1b[m }\n`)
+        this.#assets.set(`/${name}`, asset)
+      }
+    stdout.write('----\n')
+    const main = this.#assets.get('/main.html')
+    this.#assets.set('/', main as Asset)
+  }
+
+  async #loadMimeTypes(): Promise<void> {
+    const data = await readFile('conf/mime-types.json')
+    const mimeTypes = JSON.parse(data.toString()) as Record<string, string>
+    await using stdout = new AsyncWriter()
+    stdout.write('mimeTypes: {\n')
+    for (const name in mimeTypes) {
+      const value = mimeTypes[name]
+      stdout.write(`  ${name}: \x1b[32m'${value}'\x1b[m\n`)
+      this.#mimeTypes.set(name, value)
+    }
+    stdout.write('}\n')
+  }
+
+  async #request(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    {
+      await using writer = new AsyncWriter()
+      dumpRequest(request, writer)
+      request.headers.authorization?.startsWith('TOKEN')
+        ? await this.#handleRequestWithToken(request, response, writer)
+        : this.#handleRequest(request, response, writer)
+    }
+    await new Promise(response.end.bind(response))
   }
 
   constructor(port: number) {
-    this.#web = createServer()
-    this.#web.on('request', this.#handleRequest.bind(this))
-    this.#web.listen(port)
+    const commit = process.env.RENDER_GIT_COMMIT?.slice(0, 7)
+    const client = new KoukokuClient(commit)
+    client.on('message', this.#dispatch.bind(this))
+    client.on('speech', this.#dispatch.bind(this))
+    this.#client = client
+    this.#commit = commit
+    const server = createServer()
+    this.#web = server
+    server.on('request', this.#request.bind(this))
+    server.listen(port)
+    const socket = new WebSocketServer({ server })
+    socket.on('connection', this.#connected.bind(this))
+    this.#webSocket = socket
+  }
+
+  async start(): Promise<void> {
+    await this.#loadMimeTypes()
+    await this.#loadAssets()
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    const task = this.#client[Symbol.asyncDispose]()
-    this.#web.close()
-    await task
+    await using list = new PromiseList()
+    list.push(this.#client[Symbol.asyncDispose]())
+    list.push(new Promise(this.#webSocket.close.bind(this.#webSocket)))
+    list.push(new Promise(this.#web.close.bind(this.#web)))
+  }
+}
+
+const computeETag = (data: Buffer) => {
+  const { byteLength } = data
+  const checksum = fnv1[32](data)
+  const temp = Buffer.alloc(6)
+  temp.writeUInt32BE(checksum, 0)
+  temp.writeUInt16BE(byteLength & 65535, 4)
+  const etag = temp.toString('base64url')
+  return {
+    checksum,
+    etag,
   }
 }
 
@@ -64,23 +215,23 @@ const createMapFromRawHeaders = (request: IncomingMessage): Map<string, string> 
   return map
 }
 
-const dumpRequest = (request: IncomingMessage, to: NodeJS.WriteStream) => {
-  if (!request.url?.startsWith('/health') && request.url !== '/ping') {
-    to.cork()
-    to.write(`[http] ${request.method} ${request.url} HTTP/${request.httpVersion} from ${request.socket.remoteAddress}\n`)
-    for (const pair of tuple(request.rawHeaders))
+const dumpRequest = (request: IncomingMessage, to: AsyncWriter): void => {
+  const { httpVersion, method, rawHeaders, socket, url } = request
+  if (!url?.startsWith('/health') && url !== '/ping') {
+    to.write(`[http] ${method} ${url} HTTP/${httpVersion} from ${socket.remoteAddress}\n`)
+    for (const pair of tuple(rawHeaders))
       to.write(`| ${pair[0]}: ${pair[1]}\n`)
-    to.uncork()
   }
 }
 
-const readRequestAsync = (request: IncomingMessage) => new Promise(
-  (resolve: Action<Buffer>) => {
-    const list = [] as Buffer[]
-    request.on('data', (data: Buffer) => list.push(data))
-    request.on('end', () => resolve(Buffer.concat(list)))
+const isText = (mimeType: string | undefined) => mimeType?.endsWith('json') || mimeType?.startsWith('text/')
+
+const setHeaderIfPresent = (response: ServerResponse, name: string, value: string | undefined, writer: AsyncWriter) => {
+  if (value) {
+    writer.write(`| ${name}: \x1b[32m'${value}'\x1b[m\n`)
+    response.setHeader(name, value)
   }
-)
+}
 
 function* tuple<T>(list: T[]): Iterable<[T, T]> {
   for (let i = 0; i < list.length; i += 2)

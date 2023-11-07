@@ -76,12 +76,14 @@ jobs:
                 }
               )
       - name: Build
-        run: npm run build
+        run: npm run deploy
       - name: Save the built binaries to cache
         uses: actions/cache/save@v3
         with:
           key: ${{ github.job }}-${{ github.sha }}
           path: |
+            assets
+            conf
             lib/*.js
             main.js
 name: Build
