@@ -6,6 +6,7 @@
   "description": "Proxy for telnets://koukoku.shadan.open.ad.jp",
   "devDependencies": {
     "@types/node": "^20.9.0",
+    "@types/ws": "^8.5.8",
     "@typescript-eslint/eslint-plugin": "^6.10.0",
     "@typescript-eslint/parser": "^6.10.0",
     "esbuild": "^0.19.5",
@@ -13,7 +14,8 @@
     "eslint": "^8.53.0",
     "npm-run-all": "^4.1.5",
     "rimraf": "^5.0.5",
-    "typescript": "^5.2.2"
+    "typescript": "^5.2.2",
+    "ws": "^8.14.2"
   },
   "engines": {
     "node": ">=20.4.0"
@@ -26,11 +28,12 @@
   },
   "scripts": {
     "build": "run-p build:*",
-    "build:main": "esbuild src/main.ts --banner:js='import{createRequire as r}from\"module\";import{fileURLToPath as f}from\"url\";const{url:u}=import.meta;const require=r(u);const __filename=f(u);const __dirname=f(new URL(\".\", u));' --bundle --format=esm --minify --outfile=main.mjs --platform=node --target=es2022",
+    "build:assets": "tools/generate-favicon.sh",
+    "build:main": "esbuild src/main.ts --banner:js='import{createRequire as r}from\"module\";import{fileURLToPath as f}from\"url\";const{url:u}=import.meta;const require=r(u);const __filename=f(u);const __dirname=f(new URL(\".\", u));' --banner:js='import { createRequire as topLevelCreateRequire } from \"module\"; import url from \"url\"; const require = topLevelCreateRequire(import.meta.url); const __filename = url.fileURLToPath(import.meta.url); const __dirname = url.fileURLToPath(new URL(\".\", import.meta.url));' --bundle --format=esm --minify --outfile=main.mjs --platform=node --target=es2022",
     "build:tsc": "tsc",
-    "clean": "rimraf lib/ main.d.ts main.mjs types/",
+    "clean": "rimraf assets/*.ico assets/*.png lib/ main.d.ts main.mjs types/",
     "delete": "rimraf *.md .cspell.json .editorconfig .eslintrc.json .git* .npmignore .vscode/ LICENSE node_modules/ package-lock.json src/",
-    "deploy": "run-s build:main delete",
+    "deploy": "npm-run-all -l -p build:assets build:main -s delete",
     "lint": "eslint src/**/*.ts",
     "prebuild": "run-s clean",
     "prepublishOnly": "run-s build",
