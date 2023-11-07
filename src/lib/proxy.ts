@@ -1,11 +1,46 @@
-import { Action } from '../types/index.js'
-import { AsyncWriter, KoukokuClient, PromiseList } from './index.js'
+import { Action, Item } from '../types/index.js'
+import { AsyncWriter, KoukokuClient, PromiseList, fnv1 } from './index.js'
 import { IncomingMessage, Server, ServerResponse, createServer } from 'http'
+import { WebSocket, WebSocketServer } from 'ws'
+import { join as joinPath } from 'path'
+import { readFile, readdir } from 'fs/promises'
+
+type Asset = {
+  data: Buffer
+  etag: string
+  mimeType: string
+}
 
 export class KoukokuProxy implements AsyncDisposable {
+  readonly #assets = new Map<string, Asset>()
   readonly #client: KoukokuClient
   readonly #commit: string | undefined
+  readonly #mimeTypes = new Map<string, string>()
   readonly #web: Server
+  readonly #webClients = new Set<WebSocket>()
+  readonly #webSocket: WebSocketServer
+
+  async #connected(client: WebSocket, request: IncomingMessage): Promise<void> {
+    await using stdout = new AsyncWriter()
+    stdout.write('[ws] connected\n\x1b[34m')
+    dumpRequest(request, stdout)
+    stdout.write('\x1b[m----\n')
+    client.on('close', this.#disconnected.bind(this, client))
+    this.#webClients.add(client)
+  }
+
+  async #disconnected(client: WebSocket, code: number, reason: Buffer): Promise<void> {
+    await using stdout = new AsyncWriter()
+    stdout.write(`[ws] disconnected, { code: \x1b[33m${code}\x1b[m, reason: '\x1b[32m${reason.toString()}\x1b[m' }`)
+    this.#webClients.delete(client)
+  }
+
+  async #dispatch(item: Item): Promise<void> {
+    const data = Buffer.from(JSON.stringify(item))
+    await using list = new PromiseList()
+    for (const client of this.#webClients)
+      list.push(new Promise((resolve: Action<Error | undefined>) => client.send(data, resolve)))
+  }
 
   async #handlePostRequest(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
     const { CI, PERMIT_SEND } = process.env
@@ -26,7 +61,7 @@ export class KoukokuProxy implements AsyncDisposable {
   }
 
   #handleRequest(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): void {
-    const { url } = request
+    const { method, url } = request
     if (url?.startsWith('/health')) {
       response.setHeader('Content-Type', 'text/plain')
       response.statusCode = 200
@@ -39,8 +74,37 @@ export class KoukokuProxy implements AsyncDisposable {
       const time = Number(headers.get('X-Request-Start'))
       writer.write(JSON.stringify({ pong: { commit: this.#commit, time } }), response)
     }
+    else if (['GET', 'HEAD'].includes(method as string))
+      this.#handleRequestForAsset(request.headers['if-none-match'], method, response, url, writer)
     else
-      response.statusCode = 204
+      response.statusCode = 403
+  }
+
+  #handleRequestForAsset(ifNoneMatch: string | undefined, method: string | undefined, response: ServerResponse, url: string | undefined, writer: AsyncWriter): void {
+    const asset = this.#assets.get(url as string)
+    if (asset) {
+      const { data, etag, mimeType } = asset
+      const { byteLength } = data
+      const oneIfNotModified = +(etag == ifNoneMatch)
+      const statusCode = [200, 304][oneIfNotModified]
+      writer.write(`${method} \x1b[32m${url} \x1b[33m${statusCode}\x1b[m\n`)
+      writer.write(`| Content-length: \x1b[33m${byteLength}\x1b[m\n`)
+      response.setHeader('Content-length', byteLength)
+      if (typeof mimeType === 'string') {
+        writer.write(`| Content-type: \x1b[32m'${mimeType}'\x1b[m\n`)
+        response.setHeader('Content-type', mimeType)
+      }
+      writer.write(`| ETag: \x1b[32m'${etag}'\x1b[m\n`)
+      response.setHeader('ETag', etag)
+      response.statusCode = statusCode
+      const oneIfContentNecessary = oneIfNotModified * 2 + +(method === 'GET')
+      if (oneIfContentNecessary === 1)
+        writer.write(data, response)
+    }
+    else {
+      writer.write(`\x1b[31m${method} ${url} 404\x1b[m\n`)
+      response.statusCode = 404
+    }
   }
 
   async #handleRequestWithToken(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
@@ -61,6 +125,49 @@ export class KoukokuProxy implements AsyncDisposable {
     }
   }
 
+  async #loadAssets(): Promise<void> {
+    const hostname = process.env.RENDER_EXTERNAL_HOSTNAME as string
+    const dir = 'assets'
+    await using stdout = new AsyncWriter()
+    stdout.write('loading assets...\n')
+    for (const entry of await readdir(dir, { recursive: true, withFileTypes: true }))
+      if (entry.isFile()) {
+        const { name } = entry
+        const path = joinPath(dir, name)
+        const source = await readFile(path)
+        const ext = name.split('.').at(-1)
+        const mimeType = this.#mimeTypes.get(ext as string)
+        const data = isText(mimeType)
+          ? Buffer.from(source.toString().replaceAll(/\$\{host\}/g, hostname))
+          : source
+        const { byteLength } = data
+        const checksum = fnv1[32](data)
+        const temp = Buffer.alloc(6)
+        temp.writeUInt32BE(checksum, 0)
+        temp.writeUInt16BE(byteLength, 4)
+        const etag = temp.toString('base64url')
+        const asset = { data, etag, mimeType } as Asset
+        stdout.write(`${name}: { \x1b[32m'${mimeType}'\x1b[m, \x1b[33m${byteLength}\x1b[m, \x1b[3m${checksum.toString(16)}\x1b[m, \x1b[32m'${etag}'\x1b[m }\n`)
+        this.#assets.set(`/${name}`, asset)
+      }
+    stdout.write('----\n')
+    const main = this.#assets.get('/main.html')
+    this.#assets.set('/', main as Asset)
+  }
+
+  async #loadMimeTypes(): Promise<void> {
+    const data = await readFile('conf/mime-types.json')
+    const mimeTypes = JSON.parse(data.toString()) as Record<string, string>
+    await using stdout = new AsyncWriter()
+    stdout.write('mimeTypes: {\n')
+    for (const name in mimeTypes) {
+      const value = mimeTypes[name]
+      stdout.write(`  ${name}: \x1b[32m'${value}'\x1b[m\n`)
+      this.#mimeTypes.set(name, value)
+    }
+    stdout.write('}\n')
+  }
+
   async #request(request: IncomingMessage, response: ServerResponse): Promise<void> {
     {
       await using writer = new AsyncWriter()
@@ -74,16 +181,29 @@ export class KoukokuProxy implements AsyncDisposable {
 
   constructor(port: number) {
     const commit = process.env.RENDER_GIT_COMMIT?.slice(0, 7)
-    this.#client = new KoukokuClient(commit)
+    const client = new KoukokuClient(commit)
+    client.on('message', this.#dispatch.bind(this))
+    client.on('speech', this.#dispatch.bind(this))
+    this.#client = client
     this.#commit = commit
-    this.#web = createServer()
-    this.#web.on('request', this.#request.bind(this))
-    this.#web.listen(port)
+    const server = createServer()
+    this.#web = server
+    server.on('request', this.#request.bind(this))
+    server.listen(port)
+    const socket = new WebSocketServer({ server })
+    socket.on('connection', this.#connected.bind(this))
+    this.#webSocket = socket
+  }
+
+  async start(): Promise<void> {
+    await this.#loadMimeTypes()
+    await this.#loadAssets()
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
     await using list = new PromiseList()
     list.push(this.#client[Symbol.asyncDispose]())
+    list.push(new Promise(this.#webSocket.close.bind(this.#webSocket)))
     list.push(new Promise(this.#web.close.bind(this.#web)))
   }
 }
@@ -103,6 +223,8 @@ const dumpRequest = (request: IncomingMessage, to: AsyncWriter): void => {
       to.write(`| ${pair[0]}: ${pair[1]}\n`)
   }
 }
+
+const isText = (mimeType: string | undefined) => mimeType?.endsWith('json') || mimeType?.startsWith('text/')
 
 function* tuple<T>(list: T[]): Iterable<[T, T]> {
   for (let i = 0; i < list.length; i += 2)

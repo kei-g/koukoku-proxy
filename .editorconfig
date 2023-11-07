@@ -12,7 +12,7 @@ insert_final_newline = true
 tab_width = 4
 trim_trailing_whitespace = false
 
-[*.{json,mjs,ts,yml}]
+[*.{css,html,js{,on},mjs,svg,ts,webmanifest,yml}]
 indent_size = 2
 indent_style = space
 

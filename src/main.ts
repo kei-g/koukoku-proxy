@@ -15,7 +15,8 @@ const main = async () => {
       stdout.write(`${name}=${value}\n`)
     stdout.write('----\n')
   }
-  await using _proxy = new KoukokuProxy(port)
+  await using proxy = new KoukokuProxy(port)
+  await proxy.start()
   await waitForSignals('SIGABRT', 'SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGTERM')
 }
 
