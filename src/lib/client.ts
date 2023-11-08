@@ -1,5 +1,5 @@
-import { Action } from '../types'
-import { AsyncWriter, KoukokuParser } from '.'
+import { Action } from '../types/index.js'
+import { AsyncWriter, KoukokuParser } from './index.js'
 import { TLSSocket, connect as connectSecure } from 'tls'
 
 type Chat = {

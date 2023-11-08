@@ -1,4 +1,4 @@
-import { isPromiseLike } from '../types'
+import { isPromiseLike } from '../types/index.js'
 
 export class PromiseList extends Array<unknown> implements AsyncDisposable {
   constructor() {
