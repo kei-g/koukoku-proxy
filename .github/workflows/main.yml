@@ -12,8 +12,7 @@ jobs:
           path: |
             assets
             conf
-            lib/*.js
-            main.js
+            main.mjs
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -30,7 +29,7 @@ jobs:
           script: |
             const { CI, PORT, TOKEN } = process.env
             const cp = require('child_process')
-            const server = cp.spawn('node', ['main.js'])
+            const server = cp.spawn('node', ['main.mjs'])
             const response = await new Promise(
               resolve => setTimeout(
                 () => {

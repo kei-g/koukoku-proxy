@@ -1,4 +1,4 @@
-import { AsyncWriter, KoukokuProxy } from './lib'
+import { AsyncWriter, KoukokuProxy } from './lib/index.js'
 
 const main = async () => {
   const { env, pid } = process

@@ -84,8 +84,7 @@ jobs:
           path: |
             assets
             conf
-            lib/*.js
-            main.js
+            main.mjs
 name: Build
 on:
   push:

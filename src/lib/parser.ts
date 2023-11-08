@@ -1,5 +1,5 @@
-import { Action, BufferWithTimestamp } from '../types'
-import { AsyncWriter } from '.'
+import { Action, BufferWithTimestamp } from '../types/index.js'
+import { AsyncWriter } from './index.js'
 import { EventEmitter } from 'events'
 
 type FindTailContext = FindTailResult & {

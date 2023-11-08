@@ -1,8 +1,8 @@
-export * from './promise-list'
-export * from './async-writer'
+export * from './promise-list.js'
+export * from './async-writer.js'
 
 export * from './fnv1.js'
 
-export * from './parser'
-export * from './client'
-export * from './proxy'
+export * from './parser.js'
+export * from './client.js'
+export * from './proxy.js'

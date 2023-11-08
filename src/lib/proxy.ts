@@ -1,5 +1,5 @@
-import { Action, Item } from '../types'
-import { AsyncWriter, KoukokuClient, PromiseList, fnv1 } from '.'
+import { Action, Item } from '../types/index.js'
+import { AsyncWriter, KoukokuClient, PromiseList, fnv1 } from './index.js'
 import { IncomingMessage, Server, ServerResponse, createServer } from 'http'
 import { WebSocket, WebSocketServer } from 'ws'
 import { join as joinPath } from 'path'
