@@ -1,4 +1,5 @@
 import { Action, BufferWithTimestamp } from '../types'
+import { AsyncWriter } from '.'
 import { EventEmitter } from 'events'
 
 type FindTailContext = FindTailResult & {
@@ -15,10 +16,10 @@ export class KoukokuParser implements Disposable {
   readonly #messages = [] as BufferWithTimestamp[]
   readonly #speeches = [] as BufferWithTimestamp[]
 
-  #countByteLength(text: string): number {
+  #countByteLength(text: string, stdout: AsyncWriter): number {
     const last = { offset: Number.NaN } as { offset: number }
     for (const matched of text.matchAll(MessageRE)) {
-      dumpMatched(matched, process.stdout)
+      dumpMatched(matched, stdout)
       this.#emitIfSelf('self', matched)
       last.offset = (matched.index ?? Number.NaN) + matched[0].length
     }
@@ -48,10 +49,10 @@ export class KoukokuParser implements Disposable {
     }
   }
 
-  #parse(): void {
+  #parse(stdout: AsyncWriter): void {
     const text = Buffer.concat(this.#messages).toString().replaceAll(/\r?\n/g, '')
-    process.stdout.write(`[parser] '${text}'\n`)
-    const byteLength = this.#countByteLength(text)
+    stdout.write(`[parser] '${text}'\n`)
+    const byteLength = this.#countByteLength(text, stdout)
     const ctx = { count: 0, offset: 0 } as FindTailContext
     this.#findTail(ctx, byteLength)
     if (ctx.count)
@@ -68,15 +69,15 @@ export class KoukokuParser implements Disposable {
     return this
   }
 
-  write(data: Buffer): void {
+  write(data: Buffer, stdout: AsyncWriter): void {
     const obj = Buffer.of(...data) as BufferWithTimestamp
     obj.timestamp = Date.now()
     if (data.byteLength < 70)
       this.#speeches.push(obj)
     else
       this.#messages.push(obj)
-    dumpBuffer(data, process.stdout)
-    this.#parse()
+    dumpBuffer(data, stdout)
+    this.#parse(stdout)
   }
 
   [Symbol.dispose](): void {
@@ -90,12 +91,9 @@ const MessageRE = />>\s「\s(?<body>[^」]+)\s」\(チャット放話\s-\s(?<dat
 
 const byteToHex = (value: number): string => ('0' + value.toString(16)).slice(-2)
 
-const dumpBuffer = (data: Buffer, to: NodeJS.WriteStream): void => (
-  to.write([...data].map(byteToHex).join(' ') + '\n'),
-  undefined
-)
+const dumpBuffer = (data: Buffer, to: AsyncWriter) => to.write(`${[...data].map(byteToHex).join(' ')}\n`)
 
-const dumpMatched = (matched: RegExpMatchArray, to: NodeJS.WriteStream): void => {
+const dumpMatched = (matched: RegExpMatchArray, to: AsyncWriter): void => {
   const { groups } = matched
   const list = [] as string[]
   for (const name in groups)
