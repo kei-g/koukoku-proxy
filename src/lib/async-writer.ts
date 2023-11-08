@@ -1,5 +1,5 @@
-import { Action } from '../types'
-import { PromiseList } from '.'
+import { Action } from '../types/index.js'
+import { PromiseList } from './index.js'
 
 export class AsyncWriter extends PromiseList {
   readonly #destination: NodeJS.WritableStream

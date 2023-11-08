@@ -11,7 +11,7 @@
     "lib": [
       "ES2021.String",
     ],
-    "module": "CommonJS",
+    "module": "ESNext",
     "moduleResolution": "Node",
     "newLine": "lf",
     "pretty": false,

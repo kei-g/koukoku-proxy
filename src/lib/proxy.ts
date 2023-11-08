@@ -1,5 +1,5 @@
-import { Action } from '../types'
-import { AsyncWriter, KoukokuClient, PromiseList } from '.'
+import { Action } from '../types/index.js'
+import { AsyncWriter, KoukokuClient, PromiseList } from './index.js'
 import { IncomingMessage, Server, ServerResponse, createServer } from 'http'
 
 export class KoukokuProxy implements AsyncDisposable {

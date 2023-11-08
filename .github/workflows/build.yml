@@ -82,8 +82,7 @@ jobs:
         with:
           key: ${{ github.job }}-${{ github.sha }}
           path: |
-            lib/*.js
-            main.js
+            main.mjs
 name: Build
 on:
   push:

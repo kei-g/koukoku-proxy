@@ -19,14 +19,14 @@
     "node": "^20.5.1"
   },
   "license": "BSD-3-Clause",
-  "main": "main.js",
+  "main": "main.mjs",
   "name": "@kei-g/koukoku-proxy",
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
     "build": "run-p build:*",
-    "build:main": "esbuild src/main.ts --bundle --format=cjs --minify --outfile=main.js --platform=node --target=es2022",
+    "build:main": "esbuild src/main.ts --banner:js='import{createRequire as r}from\"module\";import{fileURLToPath as f}from\"url\";const{url:u}=import.meta;const require=r(u);const __filename=f(u);const __dirname=f(new URL(\".\", u));' --bundle --format=esm --minify --outfile=main.mjs --platform=node --target=es2022",
     "build:tsc": "tsc",
     "clean": "rimraf lib/ main.d.ts main.js types/",
     "delete": "rimraf *.md .cspell.json .editorconfig .eslintrc.json .git* .npmignore .vscode/ LICENSE node_modules/ package-lock.json src/",
@@ -34,7 +34,8 @@
     "lint": "eslint src/**/*.ts",
     "prebuild": "run-s clean",
     "prepublishOnly": "run-s build",
-    "start": "test -r main.js && node main.js || node --require esbuild-register src/main.ts"
+    "start": "test -r main.mjs && node main.mjs || node --require esbuild-register src/main.ts"
   },
+  "type": "module",
   "version": "1.0.0"
 }
