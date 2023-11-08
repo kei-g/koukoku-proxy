@@ -1,19 +1,13 @@
-import { Action } from './types'
-import { KoukokuProxy } from './lib'
+import { AsyncWriter, KoukokuProxy } from './lib'
 
 const main = async () => {
   const port = parseIntOr(process.env.PORT, 80)
-  process.stdout.write(`process is running on pid:\x1b[33m${process.pid}\x1b[m\n\n`)
+  {
+    await using stdout = new AsyncWriter()
+    stdout.write(`process is running on pid:\x1b[33m${process.pid}\x1b[m\n\n`)
+  }
   await using _proxy = new KoukokuProxy(port)
-  await Promise.race(
-    [
-      waitForSignalAsync('SIGABRT'),
-      waitForSignalAsync('SIGHUP'),
-      waitForSignalAsync('SIGINT'),
-      waitForSignalAsync('SIGQUIT'),
-      waitForSignalAsync('SIGTERM'),
-    ]
-  )
+  await waitForSignals('SIGABRT', 'SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGTERM')
 }
 
 const parseIntOr = (text: string | undefined, alternateValue: number) => {
@@ -21,15 +15,18 @@ const parseIntOr = (text: string | undefined, alternateValue: number) => {
   return [value, alternateValue][+isNaN(value)]
 }
 
-const waitForSignalAsync = (signal: NodeJS.Signals) => new Promise(
-  (resolve: Action<NodeJS.Signals>) => process.on(signal, resolve)
+const waitForSignals = (...signals: NodeJS.Signals[]) => Promise.race(
+  signals.map(
+    (signal: NodeJS.Signals) => new Promise(process.on.bind(process, signal))
+  )
 )
 
 main()
-  .then(() => process.exit(0))
+  .then(
+    process.exit.bind(process, 0)
+  )
   .catch(
-    (reason: unknown) => {
-      process.stdout.write(`[uncaught error] ${reason instanceof Error ? reason.message : reason}\n`)
-      process.exit(1)
-    }
+    (reason: unknown) => process.stdout.write(`[uncaught error] ${reason instanceof Error ? reason.message : reason}\n`)
+  ).finally(
+    process.exit.bind(process, 1)
   )
