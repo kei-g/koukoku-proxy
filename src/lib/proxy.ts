@@ -30,6 +30,7 @@ export class KoukokuProxy implements AsyncDisposable {
   }
 
   async #handleRequestWithToken(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
+    response.setHeader('Content-Type', 'application/json')
     if (request.headers.authorization?.split(' ').slice(1).join(' ') === process.env.TOKEN) {
       const list = [] as Buffer[]
       request.on('data', list.push.bind(list))
@@ -38,14 +39,12 @@ export class KoukokuProxy implements AsyncDisposable {
       writer.write(`[proxy] ${text}\n`)
       const { CI, PERMIT_SEND } = process.env
       const result = CI && PERMIT_SEND?.toLowerCase() !== 'yes' ? { result: true } : await this.#client.send(text)
-      response.setHeader('Content-Type', 'application/json')
       response.statusCode = 200
       writer.write(JSON.stringify(result), response)
     }
     else {
-      response.setHeader('Content-Type', 'text/plain')
       response.statusCode = 403
-      writer.write('Forbidden', response)
+      writer.write(JSON.stringify({ message: 'Forbidden' }), response)
     }
   }
 
