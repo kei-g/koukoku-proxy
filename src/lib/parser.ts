@@ -72,12 +72,12 @@ export class KoukokuParser implements Disposable {
   write(data: Buffer, stdout: AsyncWriter): void {
     const obj = Buffer.of(...data) as BufferWithTimestamp
     obj.timestamp = Date.now()
-    if (data.byteLength < 70)
-      this.#speeches.push(obj)
-    else
-      this.#messages.push(obj)
+    const arrays = [this.#messages, this.#speeches]
+    const index = +(data.byteLength < 70)
+    arrays[index].push(obj)
     dumpBuffer(data, stdout)
-    this.#parse(stdout)
+    if (index === 0)
+      this.#parse(stdout)
   }
 
   [Symbol.dispose](): void {
