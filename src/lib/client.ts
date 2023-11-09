@@ -1,4 +1,4 @@
-import { Action } from '../types/index.js'
+import { Action, Item } from '../types/index.js'
 import { AsyncWriter, KoukokuParser } from './index.js'
 import { TLSSocket, connect as connectSecure } from 'tls'
 
@@ -138,6 +138,11 @@ export class KoukokuClient implements AsyncDisposable {
     this.#parser.on('self', this.#unbind.bind(this))
     this.#port = port
     this.#connect()
+  }
+
+  on(eventName: 'message' | 'speech', listener: Action<Item>): this {
+    this.#parser.on(eventName, listener)
+    return this
   }
 
   send(text: string): Promise<object> {
