@@ -143,7 +143,7 @@ export class KoukokuClient implements AsyncDisposable {
           timestamp: Date.now(),
         } as Chat
         this.#queue.push(item)
-        process.stdout.write(`[client] ${text} is enqueued\n`)
+        process.stdout.write(`[client] \x1b[32m${text}\x1b[m is enqueued\n`)
         this.#dequeueLater(0)
       }
     )
