@@ -15,7 +15,7 @@ export class KoukokuClient implements AsyncDisposable {
   readonly #port: number
   readonly #queue = [] as Chat[]
   readonly #sent = [] as Chat[]
-  #socket: TLSSocket
+  readonly #socket = new WeakMap<this, TLSSocket>()
   readonly #timeouts = new Set<NodeJS.Timeout>()
 
   async #catch(error: Error): Promise<void> {
@@ -23,7 +23,7 @@ export class KoukokuClient implements AsyncDisposable {
     stdout.write(`[telnet] ${error.message}\n`)
   }
 
-  #connect(): TLSSocket {
+  #connect(): void {
     const opts = {
       host: this.#host,
       port: this.#port,
@@ -35,21 +35,23 @@ export class KoukokuClient implements AsyncDisposable {
     socket.on('error', this.#catch.bind(this))
     socket.setNoDelay(true)
     socket.setKeepAlive(true, 15000)
-    return socket
+    this.#socket.set(this, socket)
   }
 
   async #connected(): Promise<void> {
+    const socket = this.#socket.get(this)
     await using writer = new AsyncWriter()
-    writer.write(`[telnet] connected to ${this.#socket.remoteAddress}\n`)
-    writer.write('nobody\r\n', this.#socket)
-    this.#timeouts.add(setInterval(() => this.#socket.write('ping\r\n'), 15000))
+    writer.write(`[telnet] connected to ${socket?.remoteAddress}\n`)
+    writer.write('nobody\r\n', socket)
+    this.#timeouts.add(setInterval(() => this.#socket.get(this)?.write('ping\r\n'), 15000))
   }
 
   async #disconnected(hadError: boolean): Promise<void> {
     await using stdout = new AsyncWriter()
     stdout.write(`[telnet] disconnected with${['out', ''][+hadError]} error\n`)
-    this.#socket.removeAllListeners()
-    this.#socket = this.#connect()
+    const socket = this.#socket.get(this)
+    socket?.removeAllListeners()
+    this.#connect()
   }
 
   async #dequeue(): Promise<void> {
@@ -89,8 +91,10 @@ export class KoukokuClient implements AsyncDisposable {
 
   async #read(data: Buffer): Promise<void> {
     await using stdout = new AsyncWriter()
-    if (70 <= data.byteLength)
-      stdout.write(`[telnet] ${data.byteLength} bytes received from ${this.#socket.remoteAddress}\n`)
+    if (70 <= data.byteLength) {
+      const socket = this.#socket.get(this)
+      stdout.write(`[telnet] ${data.byteLength} bytes received from ${socket?.remoteAddress}\n`)
+    }
     this.#parser.write(data, stdout)
   }
 
@@ -120,8 +124,9 @@ export class KoukokuClient implements AsyncDisposable {
   }
 
   async #write(text: string): Promise<Error | true> {
+    const socket = this.#socket.get(this)
     const maybeError = await new Promise(
-      (resolve: Action<Error | null | undefined>) => this.#socket.write(`${text}\r\n`, resolve)
+      (resolve: Action<Error | null | undefined>) => socket?.write(`${text}\r\n`, resolve) ?? resolve(undefined)
     )
     return maybeError instanceof Error ? maybeError : true
   }
@@ -130,7 +135,7 @@ export class KoukokuClient implements AsyncDisposable {
     this.#host = host
     this.#parser.on('self', this.#unbind.bind(this))
     this.#port = port
-    this.#socket = this.#connect()
+    this.#connect()
   }
 
   send(text: string): Promise<object> {
@@ -150,8 +155,10 @@ export class KoukokuClient implements AsyncDisposable {
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
-    this.#socket.removeAllListeners()
-    await using _socket = new AsyncWriter(this.#socket, true)
+    const socket = this.#socket.get(this)
+    this.#socket.delete(this)
+    socket?.removeAllListeners()
+    await using _socket = new AsyncWriter(socket, true)
     this.#parser[Symbol.dispose]()
     const notifyShutdown = (item: Chat) => item.resolve({ error: { message: 'server shutdown' } })
     this.#queue.splice(0).forEach(notifyShutdown)
