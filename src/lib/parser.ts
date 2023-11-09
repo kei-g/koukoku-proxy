@@ -1,4 +1,4 @@
-import { Action, BufferWithTimestamp } from '../types/index.js'
+import { Action, BufferWithTimestamp, Item } from '../types/index.js'
 import { AsyncWriter } from './index.js'
 import { EventEmitter } from 'events'
 
@@ -13,6 +13,7 @@ type FindTailResult = {
 
 export class KoukokuParser implements Disposable {
   readonly #emitter = new EventEmitter()
+  readonly #idleTimeout = new WeakMap<this, NodeJS.Timeout>()
   readonly #messages = [] as BufferWithTimestamp[]
   readonly #speeches = [] as BufferWithTimestamp[]
 
@@ -20,10 +21,19 @@ export class KoukokuParser implements Disposable {
     const last = { offset: Number.NaN } as { offset: number }
     for (const matched of text.matchAll(MessageRE)) {
       dumpMatched(matched, stdout)
+      const { groups, index } = matched
+      const { byteLength } = Buffer.from(text.slice(0, index))
+      const data = findByByteOffset(this.#messages, byteLength)
+      const { body, date, dow, forgery, host, self, time } = groups as unknown as Item
+      this.#dispatch('message', { body, date, dow, forgery, host, self, time, timestamp: data?.timestamp })
       this.#emitIfSelf('self', matched)
-      last.offset = (matched.index ?? Number.NaN) + matched[0].length
+      last.offset = (index ?? Number.NaN) + matched[0].length
     }
     return isNaN(last.offset) ? 0 : Buffer.from(text.slice(0, last.offset)).byteLength
+  }
+
+  #dispatch(eventName: string, ...args: unknown[]): void {
+    queueMicrotask(this.#emitter.emit.bind(this.#emitter, eventName, ...args))
   }
 
   #emitIfSelf(eventName: 'self', matched: RegExpMatchArray): void {
@@ -31,7 +41,7 @@ export class KoukokuParser implements Disposable {
     if (groups) {
       const { body, self } = groups
       if (self)
-        this.#emitter.emit(eventName, body)
+        this.#dispatch(eventName, body)
     }
   }
 
@@ -46,6 +56,29 @@ export class KoukokuParser implements Disposable {
       }
       ctx.count++
       ctx.offset = next
+    }
+  }
+
+  async #idle(): Promise<void> {
+    const concatenated = Buffer.concat(this.#speeches)
+    const text = concatenated.toString()
+    const last = { offset: Number.NaN } as { offset: number }
+    await using stdout = new AsyncWriter()
+    for (const matched of text.matchAll(SpeechRE)) {
+      dumpMatched(matched, stdout)
+      const { groups, index } = matched
+      const { byteLength } = Buffer.from(text.slice(0, index as number))
+      const data = findByByteOffset(this.#speeches, byteLength)
+      const { body, date, dow, host, time } = groups as unknown as Item
+      this.#dispatch('speech', { body, date, dow, host, time, timestamp: data?.timestamp })
+      last.offset = (index as number) + matched[0].length
+    }
+    if (!Number.isNaN(last.offset)) {
+      const speeches = this.#speeches.splice(0)
+      const { byteLength } = Buffer.from(text.slice(0, last.offset))
+      const data = concatenated.subarray(byteLength) as BufferWithTimestamp
+      data.timestamp = speeches[0].timestamp
+      this.#speeches.push(data)
     }
   }
 
@@ -64,23 +97,30 @@ export class KoukokuParser implements Disposable {
     }
   }
 
-  on(eventName: 'self', listener: Action<string>): this {
+  on(eventName: 'message' | 'speech', listener: Action<Item>): this
+  on(eventName: 'self', listener: Action<string>): this
+  on(eventName: 'message' | 'self' | 'speech', listener: Action<Item> | Action<string>): this {
     this.#emitter.on(eventName, listener)
     return this
   }
 
-  write(data: Buffer, stdout: AsyncWriter): void {
-    const obj = Buffer.of(...data) as BufferWithTimestamp
-    obj.timestamp = Date.now()
-    const arrays = [this.#messages, this.#speeches]
+  write(data: Buffer, stdout: AsyncWriter, timestamp: number): void {
     const index = +(data.byteLength < 70)
+    if (index === 0)
+      data = Buffer.from(data.toString().replaceAll(/\r?\n/g, ''))
+    const obj = Buffer.of(...data) as BufferWithTimestamp
+    obj.timestamp = timestamp
+    clearTimeout(this.#idleTimeout.get(this))
+    const arrays = [this.#messages, this.#speeches]
     arrays[index].push(obj)
     dumpBuffer(data, stdout)
     if (index === 0)
       this.#parse(stdout)
+    this.#idleTimeout.set(this, setTimeout(this.#idle.bind(this), 125))
   }
 
   [Symbol.dispose](): void {
+    clearTimeout(this.#idleTimeout.get(this))
     this.#emitter.removeAllListeners()
     this.#messages.splice(0)
     this.#speeches.splice(0)
@@ -88,6 +128,8 @@ export class KoukokuParser implements Disposable {
 }
 
 const MessageRE = />>\s「\s(?<body>[^」]+)\s」\(チャット放話\s-\s(?<date>\d\d\/\d\d)\s\((?<dow>[日月火水木金土])\)\s(?<time>\d\d:\d\d:\d\d)\sby\s(?<host>[^\s]+)(\s\((?<forgery>※\s贋作\sDNS\s逆引の疑い)\))?\s君(\s(?<self>〈＊あなた様＊〉))?\)\s<</g
+
+const SpeechRE = /\s+(★☆){2}\s臨時ニユース\s緊急放送\s(☆★){2}\s(?<date>\p{scx=Han}+\s\d+\s年\s\d+\s月\s\d+\s日)\s(?<dow>[日月火水木金土])曜\s(?<time>\d{2}:\d{2})\s+★\sたった今、(?<host>[^\s]+)\s君より[\S\s]+★\s+＝{3}\s大演説の開闢\s＝{3}\s+(?<body>\S+(\s+\S+)*)\s+＝{3}\s大演説の終焉\s＝{3}\s+/gu
 
 const byteToHex = (value: number): string => ('0' + value.toString(16)).slice(-2)
 
@@ -99,4 +141,15 @@ const dumpMatched = (matched: RegExpMatchArray, to: AsyncWriter): void => {
   for (const name in groups)
     list.push(`${name}: ${groups[name]}`)
   to.write(`[parser] ${list.join(', ')}\n`)
+}
+
+const findByByteOffset = (array: BufferWithTimestamp[], offset: number) => {
+  const ctx = { position: 0 }
+  return array.find(
+    (value: BufferWithTimestamp) => {
+      const { position } = ctx
+      ctx.position += value.byteLength
+      return position <= offset && offset < ctx.position
+    }
+  )
 }
