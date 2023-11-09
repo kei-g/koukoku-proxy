@@ -1,4 +1,4 @@
-import { Action } from '../types/index.js'
+import { Action, Item } from '../types/index.js'
 import { AsyncWriter, KoukokuParser } from './index.js'
 import { TLSSocket, connect as connectSecure } from 'tls'
 
@@ -91,12 +91,13 @@ export class KoukokuClient implements AsyncDisposable {
   }
 
   async #read(data: Buffer): Promise<void> {
+    const timestamp = Date.now()
     await using stdout = new AsyncWriter()
     if (70 <= data.byteLength) {
       const socket = this.#socket.get(this)
       stdout.write(`[telnet] ${data.byteLength} bytes received from ${socket?.remoteAddress}\n`)
     }
-    this.#parser.write(data, stdout)
+    this.#parser.write(data, stdout, timestamp)
   }
 
   async #unbind(text: string): Promise<void> {
@@ -140,7 +141,8 @@ export class KoukokuClient implements AsyncDisposable {
     this.#connect()
   }
 
-  on(_eventName: 'message' | 'speech', _listener: unknown): this {
+  on(eventName: 'message' | 'speech', listener: Action<Item>): this {
+    this.#parser.on(eventName, listener)
     return this
   }
 
