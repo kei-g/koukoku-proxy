@@ -7,6 +7,18 @@ export class KoukokuProxy implements AsyncDisposable {
   readonly #commit: string | undefined
   readonly #web: Server
 
+  async #handlePostRequest(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
+    const { CI, PERMIT_SEND } = process.env
+    const list = [] as Buffer[]
+    request.on('data', list.push.bind(list))
+    const data = await new Promise(request.on.bind(request, 'end')).then(Buffer.concat.bind(this, list) as Action<void, Buffer>)
+    const text = data.toString()
+    writer.write(`[proxy] ${text}\n`)
+    const result = CI && PERMIT_SEND?.toLowerCase() !== 'yes' ? { commit: this.#commit, result: true } : await this.#client.sendAsync(text)
+    response.statusCode = 200
+    writer.write(JSON.stringify(result), response)
+  }
+
   async #handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     {
       await using writer = new AsyncWriter()
@@ -32,17 +44,16 @@ export class KoukokuProxy implements AsyncDisposable {
   }
 
   async #handleRequestWithToken(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
-    const { CI, PERMIT_SEND, TOKEN } = process.env
+    const { TOKEN } = process.env
     response.setHeader('Content-Type', 'application/json')
-    if (request.headers.authorization?.split(' ').slice(1).join(' ') === TOKEN) {
-      const list = [] as Buffer[]
-      request.on('data', list.push.bind(list))
-      const data = await new Promise(request.on.bind(request, 'end')).then(Buffer.concat.bind(this, list) as Action<void, Buffer>)
-      const text = data.toString()
-      writer.write(`[proxy] ${text}\n`)
-      const result = CI && PERMIT_SEND?.toLowerCase() !== 'yes' ? { commit: this.#commit, result: true } : await this.#client.send(text)
-      response.statusCode = 200
-      writer.write(JSON.stringify(result), response)
+    const { headers, method } = request
+    if (headers.authorization?.split(' ').slice(1).join(' ') === TOKEN) {
+      if (method === 'POST')
+        await this.#handlePostRequest(request, response, writer)
+      else {
+        response.statusCode = 405
+        writer.write(JSON.stringify({ commit: this.#commit, message: 'Method not allowed', method }), response)
+      }
     }
     else {
       response.statusCode = 403
