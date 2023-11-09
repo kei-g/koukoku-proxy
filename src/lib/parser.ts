@@ -51,7 +51,7 @@ export class KoukokuParser implements Disposable {
 
   #parse(stdout: AsyncWriter): void {
     const text = Buffer.concat(this.#messages).toString().replaceAll(/\r?\n/g, '')
-    stdout.write(`[parser] '${text}'\n`)
+    stdout.write(`[parser] '${text.replaceAll('\x1b', '\\x1b')}'\n`)
     const byteLength = this.#countByteLength(text, stdout)
     const ctx = { count: 0, offset: 0 } as FindTailContext
     this.#findTail(ctx, byteLength)
@@ -91,7 +91,7 @@ const MessageRE = />>\s「\s(?<body>[^」]+)\s」\(チャット放話\s-\s(?<dat
 
 const byteToHex = (value: number): string => ('0' + value.toString(16)).slice(-2)
 
-const dumpBuffer = (data: Buffer, to: AsyncWriter) => to.write(`${[...data].map(byteToHex).join(' ')}\n`)
+const dumpBuffer = (data: Buffer, to: AsyncWriter) => to.write(`[parser] ${[...data].map(byteToHex).join(' ')}\n`)
 
 const dumpMatched = (matched: RegExpMatchArray, to: AsyncWriter): void => {
   const { groups } = matched
