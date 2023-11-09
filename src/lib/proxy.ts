@@ -32,9 +32,9 @@ export class KoukokuProxy implements AsyncDisposable {
   }
 
   async #handleRequestWithToken(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
-    const { CI, PERMIT_SEND } = process.env
+    const { CI, PERMIT_SEND, TOKEN } = process.env
     response.setHeader('Content-Type', 'application/json')
-    if (request.headers.authorization?.split(' ').slice(1).join(' ') === process.env.TOKEN) {
+    if (request.headers.authorization?.split(' ').slice(1).join(' ') === TOKEN) {
       const list = [] as Buffer[]
       request.on('data', list.push.bind(list))
       const data = await new Promise(request.on.bind(request, 'end')).then(Buffer.concat.bind(this, list) as Action<void, Buffer>)
