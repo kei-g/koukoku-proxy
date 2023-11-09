@@ -3,7 +3,8 @@ import { AsyncWriter, KoukokuClient, PromiseList } from './index.js'
 import { IncomingMessage, Server, ServerResponse, createServer } from 'http'
 
 export class KoukokuProxy implements AsyncDisposable {
-  readonly #client = new KoukokuClient()
+  readonly #client: KoukokuClient
+  readonly #commit: string | undefined
   readonly #web: Server
 
   async #handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -21,8 +22,8 @@ export class KoukokuProxy implements AsyncDisposable {
         const headers = createMapFromRawHeaders(request)
         response.setHeader('Content-Type', 'application/json')
         response.statusCode = 200
-        const pong = Number(headers.get('X-Request-Start'))
-        writer.write(JSON.stringify({ pong }), response)
+        const time = Number(headers.get('X-Request-Start'))
+        writer.write(JSON.stringify({ pong: { commit: this.#commit, time } }), response)
       }
       else
         response.statusCode = 204
@@ -31,6 +32,7 @@ export class KoukokuProxy implements AsyncDisposable {
   }
 
   async #handleRequestWithToken(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
+    const { CI, PERMIT_SEND } = process.env
     response.setHeader('Content-Type', 'application/json')
     if (request.headers.authorization?.split(' ').slice(1).join(' ') === process.env.TOKEN) {
       const list = [] as Buffer[]
@@ -38,18 +40,20 @@ export class KoukokuProxy implements AsyncDisposable {
       const data = await new Promise(request.on.bind(request, 'end')).then(Buffer.concat.bind(this, list) as Action<void, Buffer>)
       const text = data.toString()
       writer.write(`[proxy] ${text}\n`)
-      const { CI, PERMIT_SEND } = process.env
-      const result = CI && PERMIT_SEND?.toLowerCase() !== 'yes' ? { result: true } : await this.#client.send(text)
+      const result = CI && PERMIT_SEND?.toLowerCase() !== 'yes' ? { commit: this.#commit, result: true } : await this.#client.send(text)
       response.statusCode = 200
       writer.write(JSON.stringify(result), response)
     }
     else {
       response.statusCode = 403
-      writer.write(JSON.stringify({ message: 'Forbidden' }), response)
+      writer.write(JSON.stringify({ commit: this.#commit, message: 'Forbidden' }), response)
     }
   }
 
   constructor(port: number) {
+    const commit = process.env.RENDER_GIT_COMMIT?.slice(0, 7)
+    this.#client = new KoukokuClient(commit)
+    this.#commit = commit
     this.#web = createServer()
     this.#web.on('request', this.#handleRequest.bind(this))
     this.#web.listen(port)

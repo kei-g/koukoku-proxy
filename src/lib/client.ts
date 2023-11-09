@@ -10,6 +10,7 @@ type Chat = {
 }
 
 export class KoukokuClient implements AsyncDisposable {
+  readonly #commit: string | undefined
   readonly #host: string
   readonly #parser = new KoukokuParser()
   readonly #port: number
@@ -118,7 +119,7 @@ export class KoukokuClient implements AsyncDisposable {
           timestamp: new Date(item.timestamp).toLocaleString('ja'),
         }
         stdout.write(`[client] resolve(${JSON.stringify(obj)})\n`)
-        item.resolve({ result: true })
+        item.resolve({ commit: this.#commit, result: true })
       }
     }
   }
@@ -131,7 +132,8 @@ export class KoukokuClient implements AsyncDisposable {
     return maybeError instanceof Error ? maybeError : true
   }
 
-  constructor(host: string = 'koukoku.shadan.open.ad.jp', port: number = 992) {
+  constructor(commit: string | undefined, host: string = 'koukoku.shadan.open.ad.jp', port: number = 992) {
+    this.#commit = commit
     this.#host = host
     this.#parser.on('self', this.#unbind.bind(this))
     this.#port = port
