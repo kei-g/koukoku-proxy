@@ -49,8 +49,14 @@ export class KoukokuProxy implements AsyncDisposable {
     const data = await new Promise(request.on.bind(request, 'end')).then(Buffer.concat.bind(this, list) as Action<void, Buffer>)
     const text = data.toString()
     writer.write(`[proxy] ${text}\n`)
-    const result = CI && PERMIT_SEND?.toLowerCase() !== 'yes' ? { commit: this.#commit, result: true } : await this.#client.send(text)
+    const result = CI && PERMIT_SEND?.toLowerCase() !== 'yes' ? { commit: this.#commit, result: true } : await this.#client.send(text) as Record<string, unknown>
     response.statusCode = 200
+    writer.write('[proxy] response: {\n')
+    for (const key in result) {
+      const value = result[key]
+      writer.write(`  ${key}: ${value}\n`)
+    }
+    writer.write('}\n')
     writer.write(JSON.stringify(result), response)
   }
 
