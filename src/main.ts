@@ -1,10 +1,19 @@
 import { AsyncWriter, KoukokuProxy } from './lib/index.js'
 
 const main = async () => {
-  const port = parseIntOr(process.env.PORT, 80)
+  const { env, pid } = process
+  const port = parseIntOr(env.PORT, 80)
   {
     await using stdout = new AsyncWriter()
-    stdout.write(`process is running on pid \x1b[33m${process.pid}\x1b[m\n\n`)
+    stdout.write(`process is running on pid \x1b[33m${pid}\x1b[m\n\n`)
+    const array = [] as [string, string | undefined][]
+    for (const name in env)
+      array.push([name, env[name]?.replaceAll('\x1b', '\\x1b')])
+    array.sort((lhs: [string, unknown], rhs: [string, unknown]) => lhs[0] < rhs[0] ? -1 : 1)
+    stdout.write('----\n')
+    for (const [name, value] of array)
+      stdout.write(`${name}=${value}\n`)
+    stdout.write('----\n')
   }
   await using _proxy = new KoukokuProxy(port)
   await waitForSignals('SIGABRT', 'SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGTERM')
