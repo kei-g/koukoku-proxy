@@ -14,33 +14,27 @@ export class KoukokuProxy implements AsyncDisposable {
     const data = await new Promise(request.on.bind(request, 'end')).then(Buffer.concat.bind(this, list) as Action<void, Buffer>)
     const text = data.toString()
     writer.write(`[proxy] ${text}\n`)
-    const result = CI && PERMIT_SEND?.toLowerCase() !== 'yes' ? { commit: this.#commit, result: true } : await this.#client.sendAsync(text)
+    const result = CI && PERMIT_SEND?.toLowerCase() !== 'yes' ? { commit: this.#commit, result: true } : await this.#client.send(text)
     response.statusCode = 200
     writer.write(JSON.stringify(result), response)
   }
 
-  async #handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    {
-      await using writer = new AsyncWriter()
-      dumpRequest(request, writer)
-      if (request.headers.authorization?.startsWith('TOKEN'))
-        this.#handleRequestWithToken(request, response, writer)
-      else if (request.url?.startsWith('/health')) {
-        response.setHeader('Content-Type', 'text/plain')
-        response.statusCode = 200
-        writer.write('\n', response)
-      }
-      else if (request.url === '/ping') {
-        const headers = createMapFromRawHeaders(request)
-        response.setHeader('Content-Type', 'application/json')
-        response.statusCode = 200
-        const time = Number(headers.get('X-Request-Start'))
-        writer.write(JSON.stringify({ pong: { commit: this.#commit, time } }), response)
-      }
-      else
-        response.statusCode = 204
+  #handleRequest(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): void {
+    const { url } = request
+    if (url?.startsWith('/health')) {
+      response.setHeader('Content-Type', 'text/plain')
+      response.statusCode = 200
+      writer.write('\n', response)
     }
-    await new Promise(response.end.bind(response))
+    else if (url === '/ping') {
+      const headers = createMapFromRawHeaders(request)
+      response.setHeader('Content-Type', 'application/json')
+      response.statusCode = 200
+      const time = Number(headers.get('X-Request-Start'))
+      writer.write(JSON.stringify({ pong: { commit: this.#commit, time } }), response)
+    }
+    else
+      response.statusCode = 204
   }
 
   async #handleRequestWithToken(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
@@ -61,12 +55,23 @@ export class KoukokuProxy implements AsyncDisposable {
     }
   }
 
+  async #request(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    {
+      await using writer = new AsyncWriter()
+      dumpRequest(request, writer)
+      request.headers.authorization?.startsWith('TOKEN')
+        ? await this.#handleRequestWithToken(request, response, writer)
+        : this.#handleRequest(request, response, writer)
+    }
+    await new Promise(response.end.bind(response))
+  }
+
   constructor(port: number) {
     const commit = process.env.RENDER_GIT_COMMIT?.slice(0, 7)
     this.#client = new KoukokuClient(commit)
     this.#commit = commit
     this.#web = createServer()
-    this.#web.on('request', this.#handleRequest.bind(this))
+    this.#web.on('request', this.#request.bind(this))
     this.#web.listen(port)
   }
 
