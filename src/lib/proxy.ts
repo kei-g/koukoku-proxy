@@ -21,7 +21,8 @@ export class KoukokuProxy implements AsyncDisposable {
         const headers = createMapFromRawHeaders(request)
         response.setHeader('Content-Type', 'application/json')
         response.statusCode = 200
-        writer.write(JSON.stringify({ pong: headers.get('X-Request-Start') }), response)
+        const pong = Number(headers.get('X-Request-Start'))
+        writer.write(JSON.stringify({ pong }), response)
       }
       else
         response.statusCode = 204
