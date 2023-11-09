@@ -59,7 +59,7 @@ export class KoukokuClient implements AsyncDisposable {
     const item = this.#queue.shift()
     await using stdout = new AsyncWriter()
     if (item) {
-      const timestamp = new Date(item.timestamp).toLocaleString('ja')
+      const timestamp = new Date(item.timestamp).toLocaleString('ja', { day: '2-digit', hour: '2-digit', minute: '2-digit', month: '2-digit', second: '2-digit', year: 'numeric' })
       stdout.write(`[client] \x1b[32m${item.message}\x1b[m is dequeued\n[client] this item has been enqueued at ${timestamp}\n`)
       const result = await this.#write(item.message)
       const template = [
@@ -116,7 +116,7 @@ export class KoukokuClient implements AsyncDisposable {
         const obj = {
           isSpeech: item.isSpeech,
           message: item.message,
-          timestamp: new Date(item.timestamp).toLocaleString('ja'),
+          timestamp: new Date(item.timestamp).toLocaleString('ja', { day: '2-digit', hour: '2-digit', minute: '2-digit', month: '2-digit', second: '2-digit', year: 'numeric' }),
         }
         stdout.write(`[client] resolve(${JSON.stringify(obj)})\n`)
         item.resolve({ commit: this.#commit, result: true })
