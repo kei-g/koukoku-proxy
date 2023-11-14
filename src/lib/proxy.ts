@@ -2,12 +2,14 @@ import { Action, Item } from '../types/index.js'
 import { AsyncWriter, KoukokuClient, PromiseList, fnv1 } from './index.js'
 import { IncomingMessage, Server, ServerResponse, createServer } from 'http'
 import { WebSocket, WebSocketServer } from 'ws'
+import { createHash } from 'crypto'
 import { join as joinPath } from 'path'
 import { readFile, readdir } from 'fs/promises'
 
 type Asset = {
   data: Buffer
   etag: string
+  expiresAt?: Date
   mimeType: string
 }
 
@@ -42,7 +44,25 @@ export class KoukokuProxy implements AsyncDisposable {
       list.push(new Promise((resolve: Action<Error | undefined>) => client.send(data, resolve)))
   }
 
-  async #handlePostRequest(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
+  async #handleAuthorizedRequest(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
+    const handlers = new Map(
+      [
+        [undefined, undefined],
+        ['POST', this.#handlePostRequest],
+        ['PUT', this.#handlePutRequest],
+      ]
+    )
+    const { method } = request
+    const handler = handlers.get(method)?.bind(this)
+    if (handler)
+      await handler(request, response, writer)
+    else {
+      response.statusCode = 405
+      writer.write(JSON.stringify({ commit: this.#commit, message: 'Method not allowed', method }), response)
+    }
+  }
+
+  async #handleChat(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
     const { CI, PERMIT_SEND } = process.env
     const list = [] as Buffer[]
     request.on('data', list.push.bind(list))
@@ -58,6 +78,63 @@ export class KoukokuProxy implements AsyncDisposable {
     }
     writer.write('}\n')
     writer.write(JSON.stringify(result), response)
+  }
+
+  async #handlePostRequest(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
+    const { url } = request
+    const handlers = {
+      '/say': this.#handleChat,
+      '/speech': this.#handleSpeech,
+    }
+    await handlers[url as keyof typeof handlers]?.bind(this)?.(request, response, writer)
+  }
+
+  async #handlePutRequest(_request: IncomingMessage, _response: ServerResponse, _writer: AsyncWriter): Promise<void> {
+  }
+
+  async #handleSpeech(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
+    const list = [] as Buffer[]
+    request.on('data', list.push.bind(list))
+    const requestData = await new Promise(request.on.bind(request, 'end')).then(Buffer.concat.bind(this, list) as Action<void, Buffer>)
+    const { content, maxLength, remark } = JSON.parse(requestData.toString()) as { content: string, maxLength: number, remark: boolean }
+    const data = Buffer.from(content)
+    const now = new Date()
+    const salt = Buffer.from(now.toISOString(), 'ascii')
+    const sha256 = createHash('sha256')
+    sha256.update(salt)
+    sha256.update(data)
+    const hash = sha256.digest().toString('hex').slice(0, maxLength)
+    const { byteLength } = data
+    const { checksum, etag } = computeETag(data)
+    const expiresAt = new Date(Date.now() + 3e6)
+    const asset = {
+      data,
+      etag,
+      expiresAt,
+      mimeType: 'text/plain',
+    }
+    const name = `/speeches/${hash}.txt`
+    const e = expiresAt.toLocaleString('ja')
+    writer.write(`[\x1b[32m${name}\x1b[m] \x1b[33m${byteLength}\x1b[m, ${etag}, expiresAt ${e}\n`)
+    this.#assets.set(name, asset)
+    const hostname = process.env.RENDER_EXTERNAL_HOSTNAME as string
+    const url = `https://${hostname}${name}`
+    const result = remark ? await this.#client.send(url) : { status: 'accepted' }
+    writer.write(
+      JSON.stringify(
+        {
+          checksum,
+          byteLength,
+          etag,
+          expiresAt: e,
+          name,
+          result,
+          url,
+        }
+      ),
+      response
+    )
+    setTimeout(this.#assets.delete.bind(this.#assets, name), expiresAt.getTime() - Date.now())
   }
 
   #handleRequest(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): void {
@@ -83,7 +160,7 @@ export class KoukokuProxy implements AsyncDisposable {
   #handleRequestForAsset(ifNoneMatch: string | undefined, method: string | undefined, response: ServerResponse, url: string | undefined, writer: AsyncWriter): void {
     const asset = this.#assets.get(url as string)
     if (asset) {
-      const { data, etag, mimeType } = asset
+      const { data, etag, expiresAt, mimeType } = asset
       const { byteLength } = data
       const oneIfNotModified = +(etag == ifNoneMatch)
       const statusCode = [200, 304][oneIfNotModified]
@@ -93,6 +170,8 @@ export class KoukokuProxy implements AsyncDisposable {
       setHeaderIfPresent(response, 'Content-type', mimeType, writer)
       writer.write(`| ETag: \x1b[32m'${etag}'\x1b[m\n`)
       response.setHeader('ETag', etag)
+      const utc = expiresAt?.toUTCString()
+      setHeaderIfPresent(response, 'Expires', utc, writer)
       response.statusCode = statusCode
       const oneIfContentNecessary = oneIfNotModified * 2 + +(method === 'GET')
       if (oneIfContentNecessary === 1)
@@ -107,15 +186,8 @@ export class KoukokuProxy implements AsyncDisposable {
   async #handleRequestWithToken(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
     const { TOKEN } = process.env
     response.setHeader('Content-Type', 'application/json')
-    const { headers, method } = request
-    if (headers.authorization?.split(' ').slice(1).join(' ') === TOKEN) {
-      if (method === 'POST')
-        await this.#handlePostRequest(request, response, writer)
-      else {
-        response.statusCode = 405
-        writer.write(JSON.stringify({ commit: this.#commit, message: 'Method not allowed', method }), response)
-      }
-    }
+    if (request.headers.authorization?.split(' ').slice(1).join(' ') === TOKEN)
+      await this.#handleAuthorizedRequest(request, response, writer)
     else {
       response.statusCode = 403
       writer.write(JSON.stringify({ commit: this.#commit, message: 'Forbidden' }), response)

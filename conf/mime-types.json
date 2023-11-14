@@ -5,5 +5,6 @@
   "ico": "image/vnd.microsoft.icon",
   "js": "text/javascript",
   "png": "image/png",
+  "txt": "text/plain",
   "webmanifest": "application/manifest+json"
 }
