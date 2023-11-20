@@ -177,6 +177,8 @@ export class KoukokuProxy implements AsyncDisposable {
         [undefined, undefined],
         ['/health', this.#handleHealth],
         ['/ping', this.#handlePing],
+        ['/say', this.#handleUnauthorized],
+        ['/speech', this.#handleUnauthorized],
         ['/status', this.#handleStatus],
       ]
     )
@@ -224,6 +226,12 @@ export class KoukokuProxy implements AsyncDisposable {
       response.statusCode = 403
       writer.write(JSON.stringify({ commit: this.#commit, message: 'Forbidden' }), response)
     }
+  }
+
+  #handleUnauthorized(_request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): void {
+    response.setHeader('content-type', 'application/json')
+    response.statusCode = 403
+    writer.write(JSON.stringify({ commit: this.#commit, message: 'Forbidden' }), response)
   }
 
   async #loadAssets(): Promise<void> {
