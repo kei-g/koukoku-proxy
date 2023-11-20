@@ -80,6 +80,20 @@ export class KoukokuProxy implements AsyncDisposable {
     writer.write(JSON.stringify(result), response)
   }
 
+  #handleHealth(_request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): void {
+    response.setHeader('Content-Type', 'text/plain')
+    response.statusCode = 200
+    writer.write('\n', response)
+  }
+
+  #handlePing(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): void {
+    const headers = createMapFromRawHeaders(request)
+    response.setHeader('Content-Type', 'application/json')
+    response.statusCode = 200
+    const time = Number(headers.get('X-Request-Start'))
+    writer.write(JSON.stringify({ pong: { commit: this.#commit, time } }), response)
+  }
+
   async #handlePostRequest(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): Promise<void> {
     const { url } = request
     const handlers = {
@@ -137,20 +151,38 @@ export class KoukokuProxy implements AsyncDisposable {
     setTimeout(this.#assets.delete.bind(this.#assets, name), expiresAt.getTime() - Date.now())
   }
 
+  #handleStatus(_request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): void {
+    const report = process.report?.getReport() as Record<string, unknown> | undefined
+    delete report?.environmentVariables
+    delete report?.javascriptStack
+    delete report?.libuv
+    delete report?.nativeStack
+    delete report?.sharedObjects
+    delete report?.workers
+    const status = {
+      constrainedMemory: process.constrainedMemory(),
+      memoryUsage: process.memoryUsage(),
+      report,
+      resource: process.resourceUsage(),
+    }
+    response.setHeader('content-type', 'application/json')
+    response.statusCode = 200
+    writer.write(JSON.stringify(status, undefined, 2), response)
+  }
+
   #handleRequest(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): void {
     const { method, url } = request
-    if (url?.startsWith('/health')) {
-      response.setHeader('Content-Type', 'text/plain')
-      response.statusCode = 200
-      writer.write('\n', response)
-    }
-    else if (url === '/ping') {
-      const headers = createMapFromRawHeaders(request)
-      response.setHeader('Content-Type', 'application/json')
-      response.statusCode = 200
-      const time = Number(headers.get('X-Request-Start'))
-      writer.write(JSON.stringify({ pong: { commit: this.#commit, time } }), response)
-    }
+    const handlers = new Map(
+      [
+        [undefined, undefined],
+        ['/health', this.#handleHealth],
+        ['/ping', this.#handlePing],
+        ['/status', this.#handleStatus],
+      ]
+    )
+    const handler = handlers.get(url)?.bind(this)
+    if (handler)
+      handler(request, response, writer)
     else if (['GET', 'HEAD'].includes(method as string))
       this.#handleRequestForAsset(request.headers['if-none-match'], method, response, url, writer)
     else
