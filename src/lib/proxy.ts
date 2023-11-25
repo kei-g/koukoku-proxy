@@ -1,4 +1,4 @@
-import { Action, Item } from '../types/index.js'
+import { Action, ItemWithId } from '../types/index.js'
 import { AsyncWriter, KoukokuClient, PromiseList, fnv1 } from './index.js'
 import { IncomingMessage, Server, ServerResponse, createServer } from 'http'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -29,6 +29,11 @@ export class KoukokuProxy implements AsyncDisposable {
     stdout.write('\x1b[m----\n')
     client.on('close', this.#disconnected.bind(this, client))
     this.#webClients.add(client)
+    queueMicrotask(
+      async () => client.send(
+        Buffer.from(JSON.stringify(await this.#client.query()))
+      )
+    )
   }
 
   async #disconnected(client: WebSocket, code: number, reason: Buffer): Promise<void> {
@@ -37,8 +42,8 @@ export class KoukokuProxy implements AsyncDisposable {
     this.#webClients.delete(client)
   }
 
-  async #dispatch(item: Item): Promise<void> {
-    const data = Buffer.from(JSON.stringify(item))
+  async #dispatch(item: ItemWithId): Promise<void> {
+    const data = Buffer.from(JSON.stringify([item]))
     await using list = new PromiseList()
     for (const client of this.#webClients)
       list.push(new Promise((resolve: Action<Error | undefined>) => client.send(data, resolve)))

@@ -4,11 +4,17 @@ export type Item = {
   body: string
   date: string
   dow: DayOfWeek
+  finished?: string
   forgery?: '※ 贋作 DNS 逆引の疑い'
   host: string
   self?: '〈＊あなた様＊〉'
   time: string
   timestamp: number
+}
+
+export type ItemWithId = {
+  id: string
+  item: Item
 }
 
 export const isItem = (value: unknown): value is Item => {

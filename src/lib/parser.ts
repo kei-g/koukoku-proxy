@@ -1,6 +1,8 @@
-import { Action, BufferWithTimestamp, Item } from '../types/index.js'
+import { Action, BufferWithTimestamp, Item, ItemWithId } from '../types/index.js'
 import { AsyncWriter } from './index.js'
 import { EventEmitter } from 'events'
+import { RedisClientType, RedisFunctions, RedisModules, RedisScripts, createClient } from '@redis/client'
+import { createHash } from 'crypto'
 
 type FindTailContext = FindTailResult & {
   offset: number
@@ -14,10 +16,16 @@ type FindTailResult = {
 export class KoukokuParser implements Disposable {
   readonly #emitter = new EventEmitter()
   readonly #idleTimeout = new WeakMap<this, NodeJS.Timeout>()
+  readonly #logKey: string
   readonly #messages = [] as BufferWithTimestamp[]
   readonly #speeches = [] as BufferWithTimestamp[]
+  readonly #timestampKey: string
+  readonly #url: string
 
-  #countByteLength(text: string, stdout: AsyncWriter): number {
+  // eslint-disable-next-line complexity
+  async #countByteLength(text: string, stdout: AsyncWriter): Promise<number> {
+    const timestamp = Date.now()
+    const onDemand = {} as { db: RedisClientType<RedisModules, RedisFunctions, RedisScripts> }
     const last = { offset: Number.NaN } as { offset: number }
     for (const matched of text.matchAll(MessageRE)) {
       dumpMatched(matched, stdout)
@@ -25,10 +33,17 @@ export class KoukokuParser implements Disposable {
       const { byteLength } = Buffer.from(text.slice(0, index))
       const data = findByByteOffset(this.#messages, byteLength)
       const { body, date, dow, forgery, host, self, time } = groups as unknown as Item
-      this.#dispatch('message', { body, date, dow, forgery, host, self, time, timestamp: data?.timestamp })
+      const item = { body, date, dow, forgery, host, self, time } as Item
+      deleteUndefinedFields(item)
+      onDemand.db ??= await createClient({ url: this.#url }).connect()
+      const id = await onDemand.db.xAdd(this.#logKey, '*', item as unknown as Record<string, string>)
+      await onDemand.db.zAdd(this.#timestampKey, { score: timestamp, value: id })
+      item.timestamp = data?.timestamp as number
+      this.#dispatch('message', { id, item })
       this.#emitIfSelf('self', matched)
       last.offset = (index ?? Number.NaN) + matched[0].length
     }
+    await onDemand.db?.disconnect()
     return isNaN(last.offset) ? 0 : Buffer.from(text.slice(0, last.offset)).byteLength
   }
 
@@ -59,7 +74,8 @@ export class KoukokuParser implements Disposable {
     }
   }
 
-  async #idle(): Promise<void> {
+  async #idle(timestamp: number): Promise<void> {
+    const onDemand = {} as { db: RedisClientType<RedisModules, RedisFunctions, RedisScripts> }
     const concatenated = Buffer.concat(this.#speeches)
     const text = concatenated.toString()
     const last = { offset: Number.NaN } as { offset: number }
@@ -69,10 +85,22 @@ export class KoukokuParser implements Disposable {
       const { groups, index } = matched
       const { byteLength } = Buffer.from(text.slice(0, index as number))
       const data = findByByteOffset(this.#speeches, byteLength)
+      const score = data?.timestamp as number
       const { body, date, dow, host, time } = groups as unknown as Item
-      this.#dispatch('speech', { body, date, dow, host, time, timestamp: data?.timestamp })
+      const item = { body, date, dow, host, time } as Item & { hash: string }
+      deleteUndefinedFields(item)
+      item.finished = `${timestamp}`
+      const sha256 = createHash('sha256')
+      sha256.update(matched[0])
+      item.hash = sha256.digest().toString('hex')
+      onDemand.db ??= await createClient({ url: this.#url }).connect()
+      const id = await onDemand.db.xAdd(this.#logKey, '*', item as unknown as Record<string, string>)
+      await onDemand.db.zAdd(this.#timestampKey, { score, value: id })
+      item.timestamp = score
+      this.#dispatch('speech', { id, item })
       last.offset = (index as number) + matched[0].length
     }
+    await onDemand.db?.disconnect()
     if (!Number.isNaN(last.offset)) {
       const speeches = this.#speeches.splice(0)
       const { byteLength } = Buffer.from(text.slice(0, last.offset))
@@ -82,10 +110,10 @@ export class KoukokuParser implements Disposable {
     }
   }
 
-  #parse(stdout: AsyncWriter): void {
+  async #parse(stdout: AsyncWriter): Promise<void> {
     const text = Buffer.concat(this.#messages).toString().replaceAll(/\r?\n/g, '')
     stdout.write(`[parser] '${text.replaceAll('\x1b', '\\x1b')}'\n`)
-    const byteLength = this.#countByteLength(text, stdout)
+    const byteLength = await this.#countByteLength(text, stdout)
     const ctx = { count: 0, offset: 0 } as FindTailContext
     this.#findTail(ctx, byteLength)
     if (ctx.count)
@@ -97,11 +125,38 @@ export class KoukokuParser implements Disposable {
     }
   }
 
-  on(eventName: 'message' | 'speech', listener: Action<Item>): this
+  constructor() {
+    const { REDIS_LOG_KEY, REDIS_TIMESTAMP_KEY, REDIS_URL } = process.env
+    this.#logKey = REDIS_LOG_KEY ?? 'koukoku:log'
+    this.#timestampKey = REDIS_TIMESTAMP_KEY ?? 'koukoku:timestamp'
+    this.#url = REDIS_URL as string
+  }
+
+  on(eventName: 'message' | 'speech', listener: Action<ItemWithId>): this
   on(eventName: 'self', listener: Action<string>): this
-  on(eventName: 'message' | 'self' | 'speech', listener: Action<Item> | Action<string>): this {
+  on(eventName: 'message' | 'self' | 'speech', listener: Action<ItemWithId> | Action<string>): this {
     this.#emitter.on(eventName, listener)
     return this
+  }
+
+  async query(): Promise<ItemWithId[]> {
+    const db = createClient({ url: this.#url })
+    await db.connect()
+    const z = await db.zRangeWithScores(this.#timestampKey, -100, -1)
+    z.sort(ascendingByValue)
+    const start = z.at(0)?.value
+    const end = z.at(-1)?.value
+    const items = await db.xRange(this.#logKey, start ?? '-', end ?? '+')
+    await db.disconnect()
+    const map = new Map(z.map(item => [item.value, item.score]))
+    return items.map(
+      element => {
+        const { id, message } = element
+        const item = message as unknown as Item
+        item.timestamp = map.get(id) ?? Number.NaN
+        return { id, item }
+      }
+    )
   }
 
   write(data: Buffer, stdout: AsyncWriter, timestamp: number): void {
@@ -116,7 +171,7 @@ export class KoukokuParser implements Disposable {
     dumpBuffer(data, stdout)
     if (index === 0)
       this.#parse(stdout)
-    this.#idleTimeout.set(this, setTimeout(this.#idle.bind(this), 125))
+    this.#idleTimeout.set(this, setTimeout(this.#idle.bind(this, timestamp), 125))
   }
 
   [Symbol.dispose](): void {
@@ -131,7 +186,15 @@ const MessageRE = />>\s「\s(?<body>[^」]+(?=\s」))\s」\(チャット放話\s
 
 const SpeechRE = /\s+(★☆){2}\s臨時ニユース\s緊急放送\s(☆★){2}\s(?<date>\p{scx=Han}+\s\d+\s年\s\d+\s月\s\d+\s日)\s(?<dow>[日月火水木金土])曜\s(?<time>\d{2}:\d{2})\s+★\sたった今、(?<host>[^\s]+)\s君より[\S\s]+★\s+＝{3}\s大演説の開闢\s＝{3}(\r\n){2}(?<body>[\S\s]+(?=(\r\n){2}))\s+＝{3}\s大演説の終焉\s＝{3}\s+/gu
 
+const ascendingByValue = (lhs: { value: string }, rhs: { value: string }) => lhs.value < rhs.value ? -1 : 1
+
 const byteToHex = (value: number): string => ('0' + value.toString(16)).slice(-2)
+
+const deleteUndefinedFields = (item: Record<string, unknown>) => {
+  for (const key in item)
+    if (item[key] === undefined)
+      delete item[key]
+}
 
 const dumpBuffer = (data: Buffer, to: AsyncWriter) => to.write(`[parser] ${[...data].map(byteToHex).join(' ')}\n`)
 
