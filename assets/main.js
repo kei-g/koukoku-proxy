@@ -45,6 +45,9 @@ const prependItem = async (ul, ev) => {
     li.appendChild(body)
     li.appendChild(host)
     ul.prepend(li)
+    const nodes = document.querySelectorAll('li.loading')
+    for (let i = 0; i < nodes.length; i++)
+      ul.removeChild(nodes.item(i))
   }
 }
 

@@ -1,6 +1,7 @@
 import { Action, ItemWithId } from '../types/index.js'
 import { AsyncWriter, KoukokuParser } from './index.js'
 import { TLSSocket, connect as connectSecure } from 'tls'
+import { Writable } from 'stream'
 
 type Chat = {
   isSpeech: boolean
@@ -164,6 +165,10 @@ export class KoukokuClient implements AsyncDisposable {
         this.#dequeueLater(0)
       }
     )
+  }
+
+  writeHistogramTo(destination: Writable): Promise<void> {
+    return this.#parser.writeHistogramTo(destination)
   }
 
   async [Symbol.asyncDispose](): Promise<void> {

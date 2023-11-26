@@ -2,6 +2,7 @@ import { Action, BufferWithTimestamp, Item, ItemWithId } from '../types/index.js
 import { AsyncWriter } from './index.js'
 import { EventEmitter } from 'events'
 import { RedisClientType, RedisFunctions, RedisModules, RedisScripts, createClient } from '@redis/client'
+import { Writable } from 'stream'
 import { createHash } from 'crypto'
 
 type FindTailContext = FindTailResult & {
@@ -143,7 +144,7 @@ export class KoukokuParser implements Disposable {
     const db = createClient({ url: this.#url })
     await db.connect()
     const z = await db.zRangeWithScores(this.#timestampKey, -100, -1)
-    z.sort(ascendingByValue)
+    z.sort(ascendingByKey('value'))
     const start = z.at(0)?.value
     const end = z.at(-1)?.value
     const items = await db.xRange(this.#logKey, start ?? '-', end ?? '+')
@@ -174,6 +175,43 @@ export class KoukokuParser implements Disposable {
     this.#idleTimeout.set(this, setTimeout(this.#idle.bind(this, timestamp), 125))
   }
 
+  async writeHistogramTo(destination: Writable): Promise<void> {
+    const db = createClient({ url: this.#url })
+    await db.connect()
+    const items = await db.xRange(this.#logKey, '-', '+')
+    await db.disconnect()
+    const analyzed = items.map(analyze)
+    const sorted = analyzed.sort(ascendingByKey('at'))
+    const first = sorted.at(0) as { at: number }
+    const last = sorted.at(-1) as { at: number }
+    const range = (last.at - first.at) / 36e5
+    const map = new Map<number, { all: number, bot: number, chat: number, speech: number, time: number }>()
+    const max = { value: 0 }
+    for (const item of sorted) {
+      const { at: k } = item
+      const q = Math.trunc((k - first.at) / 36e5)
+      const v = map.get(q) ?? { all: 0, bot: 0, chat: 0, speech: 0, time: 0 }
+      v.all++
+      visit(item, v, 'bot', 'chat', 'speech', 'time')
+      map.set(q, v)
+      max.value = Math.max(v.all, max.value)
+    }
+    destination.write('<svg height="768" viewBox="0 0 8192 768" width="8192" xmlns="http://www.w3.org/2000/svg">')
+    destination.write('<g fill="black" font-family="monospace" font-size="22" stroke-width="0">')
+    destination.write(`<text x="7800" y="24">Since: ${formatDate(first.at)}</text>`)
+    destination.write(`<text x="7800" y="48">Until: ${formatDate(last.at)}</text>`)
+    destination.write('<text x="7800" y="72">Period: 1 hour</text>')
+    destination.write('<text x="7800" y="96">Bot</text>')
+    destination.write('<text x="7800" y="120">Speech</text>')
+    destination.write('</g>')
+    destination.write('<line fill="red" stroke="red" x1="7900" y1="88" x2="8168" y2="88" />')
+    destination.write('<line fill="blue" stroke="blue" x1="7900" y1="112" x2="8168" y2="112" />')
+    polyline(map, max.value, range, selectAll, 'black', destination)
+    polyline(map, max.value, range, selectBot, 'red', destination)
+    polyline(map, max.value, range, selectSpeech, 'blue', destination)
+    destination.write('</svg>')
+  }
+
   [Symbol.dispose](): void {
     clearTimeout(this.#idleTimeout.get(this))
     this.#emitter.removeAllListeners()
@@ -186,7 +224,19 @@ const MessageRE = />>\s「\s(?<body>[^」]+(?=\s」))\s」\(チャット放話\s
 
 const SpeechRE = /\s+(★☆){2}\s臨時ニユース\s緊急放送\s(☆★){2}\s(?<date>\p{scx=Han}+\s\d+\s年\s\d+\s月\s\d+\s日)\s(?<dow>[日月火水木金土])曜\s(?<time>\d{2}:\d{2})\s+★\sたった今、(?<host>[^\s]+)\s君より[\S\s]+★\s+＝{3}\s大演説の開闢\s＝{3}(\r\n){2}(?<body>[\S\s]+(?=(\r\n){2}))\s+＝{3}\s大演説の終焉\s＝{3}\s+/gu
 
-const ascendingByValue = (lhs: { value: string }, rhs: { value: string }) => lhs.value < rhs.value ? -1 : 1
+const analyze = (item: { id: string, message: Record<string, string> }) => {
+  const { id, message } = item
+  const chat = 'log' in message
+  return {
+    at: Math.trunc(parseInt(id.split('-')[0])),
+    bot: (chat && /^>> 「 \[Bot/.test(message.log)) || message.body?.startsWith('[Bot'),
+    chat,
+    speech: 'hash' in message,
+    time: chat && /^>> 「 \[時報\] /.test(message.log),
+  }
+}
+
+const ascendingByKey = <K extends string | symbol, T extends Record<K, unknown>>(key: K) => (lhs: T, rhs: T) => lhs[key] < rhs[key] ? -1 : 1
 
 const byteToHex = (value: number): string => ('0' + value.toString(16)).slice(-2)
 
@@ -215,4 +265,28 @@ const findByByteOffset = (array: BufferWithTimestamp[], offset: number) => {
       return position <= offset && offset < ctx.position
     }
   )
+}
+
+const formatDate = (value: number) => new Date(value).toLocaleString('ja').replaceAll(/(?<=[ /:])\d(?=[^\d])/g, matched => `0${matched}`)
+
+const polyline = <V>(map: Map<number, V>, max: number, range: number, selector: (value: V) => number, color: string, destination: NodeJS.WritableStream) => {
+  destination.write('  <polyline fill="white" points="0,768')
+  for (const [q, item] of map) {
+    const x = 1 + q * 8192 / range
+    const y = 1 + 766 * (max - selector(item)) / max
+    destination.write(` ${x},${y}`)
+  }
+  destination.write(`" stroke="${color}" />`)
+}
+
+const selectAll = (item: Record<string, number>) => item.all
+
+const selectBot = (item: Record<string, number>) => item.bot
+
+const selectSpeech = (item: Record<string, number>) => item.speech
+
+const visit = <K extends string, U extends Record<K, boolean>, V extends Record<K, number>>(item: U, v: V, ...keys: K[]) => {
+  for (const key of keys)
+    if (item[key])
+      v[key]++
 }

@@ -91,6 +91,12 @@ export class KoukokuProxy implements AsyncDisposable {
     writer.write('\n', response)
   }
 
+  #handleHistogram(_request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): void {
+    response.setHeader('content-type', 'image/svg+xml')
+    response.statusCode = 200
+    writer.push(this.#client.writeHistogramTo(response))
+  }
+
   #handlePing(request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): void {
     const headers = createMapFromRawHeaders(request)
     response.setHeader('Content-Type', 'application/json')
@@ -181,6 +187,7 @@ export class KoukokuProxy implements AsyncDisposable {
       [
         [undefined, undefined],
         ['/health', this.#handleHealth],
+        ['/histogram.svg', this.#handleHistogram],
         ['/ping', this.#handlePing],
         ['/say', this.#handleUnauthorized],
         ['/speech', this.#handleUnauthorized],
