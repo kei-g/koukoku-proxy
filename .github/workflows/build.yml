@@ -78,7 +78,7 @@ jobs:
       - name: Build
         run: npm run deploy
       - name: Save the built binaries to cache
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@v4
         with:
           key: ${{ github.job }}-${{ github.sha }}
           path: |
