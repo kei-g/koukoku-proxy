@@ -1,3 +1,3 @@
-export type BufferWithTimestamp = Buffer & {
+export interface BufferWithTimestamp extends Buffer {
   timestamp: number
 }

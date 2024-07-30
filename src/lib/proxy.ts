@@ -6,7 +6,7 @@ import { createHash } from 'crypto'
 import { join as joinPath } from 'path'
 import { readFile, readdir } from 'fs/promises'
 
-type Asset = {
+interface Asset {
   data: Buffer
   etag: string
   expiresAt?: Date

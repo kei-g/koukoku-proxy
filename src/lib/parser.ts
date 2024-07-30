@@ -5,11 +5,11 @@ import { RedisClientType, RedisFunctions, RedisModules, RedisScripts, createClie
 import { Writable } from 'stream'
 import { createHash } from 'crypto'
 
-type FindTailContext = FindTailResult & {
+interface FindTailContext extends FindTailResult {
   offset: number
 }
 
-type FindTailResult = {
+interface FindTailResult {
   count: number
   pos?: number
 }

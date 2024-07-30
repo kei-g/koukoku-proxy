@@ -1,6 +1,6 @@
 type DayOfWeek = '日' | '月' | '火' | '水' | '木' | '金' | '土'
 
-export type Item = {
+export interface Item extends Record<string, number | string | undefined> {
   body: string
   date: string
   dow: DayOfWeek
@@ -12,7 +12,7 @@ export type Item = {
   timestamp: number
 }
 
-export type ItemWithId = {
+export interface ItemWithId {
   id: string
   item: Item
 }

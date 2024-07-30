@@ -3,7 +3,7 @@ import { AsyncWriter, KoukokuParser } from './index.js'
 import { TLSSocket, connect as connectSecure } from 'tls'
 import { Writable } from 'stream'
 
-type Chat = {
+interface Chat {
   isSpeech: boolean
   message: string
   resolve: Action<object>
