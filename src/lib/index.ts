@@ -1,3 +1,5 @@
+export * from './coalesce.js'
+
 export * from './promise-list.js'
 export * from './async-writer.js'
 

@@ -164,12 +164,14 @@ export class KoukokuProxy implements AsyncDisposable {
 
   #handleStatus(_request: IncomingMessage, response: ServerResponse, writer: AsyncWriter): void {
     const report = process.report?.getReport() as Record<string, unknown> | undefined
-    delete report?.environmentVariables
-    delete report?.javascriptStack
-    delete report?.libuv
-    delete report?.nativeStack
-    delete report?.sharedObjects
-    delete report?.workers
+    if (report) {
+      delete report.environmentVariables
+      delete report.javascriptStack
+      delete report.libuv
+      delete report.nativeStack
+      delete report.sharedObjects
+      delete report.workers
+    }
     const status = {
       constrainedMemory: process.constrainedMemory(),
       memoryUsage: process.memoryUsage(),

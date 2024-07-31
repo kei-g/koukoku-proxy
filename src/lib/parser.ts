@@ -1,5 +1,5 @@
 import { Action, BufferWithTimestamp, Item, ItemWithId } from '../types/index.js'
-import { AsyncWriter } from './index.js'
+import { AsyncWriter, coalesceAssign } from './index.js'
 import { EventEmitter } from 'events'
 import { RedisClientType, RedisFunctions, RedisModules, RedisScripts, createClient } from '@redis/client'
 import { Writable } from 'stream'
@@ -94,7 +94,7 @@ export class KoukokuParser implements Disposable {
       const sha256 = createHash('sha256')
       sha256.update(matched[0])
       item.hash = sha256.digest().toString('hex')
-      onDemand.db ??= await createClient({ url: this.#url }).connect()
+      coalesceAssign(onDemand, 'db', await createClient({ url: this.#url }).connect())
       const id = await onDemand.db.xAdd(this.#logKey, '*', item as unknown as Record<string, string>)
       await onDemand.db.zAdd(this.#timestampKey, { score, value: id })
       item.timestamp = score
@@ -133,8 +133,8 @@ export class KoukokuParser implements Disposable {
     this.#url = REDIS_URL as string
   }
 
-  on(eventName: 'message' | 'speech', listener: Action<ItemWithId>): this
-  on(eventName: 'self', listener: Action<string>): this
+  on(_eventName: 'message' | 'speech', _listener: Action<ItemWithId>): this
+  on(_eventName: 'self', _listener: Action<string>): this
   on(eventName: 'message' | 'self' | 'speech', listener: Action<ItemWithId> | Action<string>): this {
     this.#emitter.on(eventName, listener)
     return this
@@ -269,7 +269,7 @@ const findByByteOffset = (array: BufferWithTimestamp[], offset: number) => {
 
 const formatDate = (value: number) => new Date(value).toLocaleString('ja').replaceAll(/(?<=[ /:])\d(?=[^\d])/g, matched => `0${matched}`)
 
-const polyline = <V>(map: Map<number, V>, max: number, range: number, selector: (value: V) => number, color: string, destination: NodeJS.WritableStream) => {
+const polyline = <V>(map: Map<number, V>, max: number, range: number, selector: (_value: V) => number, color: string, destination: NodeJS.WritableStream) => {
   destination.write('  <polyline fill="white" points="0,768')
   for (const [q, item] of map) {
     const x = 1 + q * 8192 / range

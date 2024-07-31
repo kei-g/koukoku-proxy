@@ -1,1 +1,1 @@
-export type Action<T = void, U = void> = (value: T) => U
+export type Action<T = void, U = void> = (_value: T) => U
