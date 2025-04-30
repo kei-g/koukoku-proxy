@@ -1,8 +1,9 @@
+import type { RedisClientType } from '@redis/client'
 import { Action, BufferWithTimestamp, Item, ItemWithId } from '../types/index.js'
 import { AsyncWriter, coalesceAssign } from './index.js'
 import { EventEmitter } from 'events'
-import { RedisClientType, RedisFunctions, RedisModules, RedisScripts, createClient } from '@redis/client'
 import { Writable } from 'stream'
+import { createClient } from '@redis/client'
 import { createHash } from 'crypto'
 
 interface FindTailContext extends FindTailResult {
@@ -26,7 +27,7 @@ export class KoukokuParser implements Disposable {
   // eslint-disable-next-line complexity
   async #countByteLength(text: string, stdout: AsyncWriter): Promise<number> {
     const timestamp = Date.now()
-    const onDemand = {} as { db: RedisClientType<RedisModules, RedisFunctions, RedisScripts> }
+    const onDemand = {} as { db: RedisClientType }
     const last = { offset: Number.NaN } as { offset: number }
     for (const matched of text.matchAll(MessageRE)) {
       dumpMatched(matched, stdout)
@@ -44,7 +45,7 @@ export class KoukokuParser implements Disposable {
       this.#emitIfSelf('self', matched)
       last.offset = (index ?? Number.NaN) + matched[0].length
     }
-    await onDemand.db?.disconnect()
+    onDemand.db?.destroy()
     return isNaN(last.offset) ? 0 : Buffer.from(text.slice(0, last.offset)).byteLength
   }
 
@@ -76,7 +77,7 @@ export class KoukokuParser implements Disposable {
   }
 
   async #idle(timestamp: number): Promise<void> {
-    const onDemand = {} as { db: RedisClientType<RedisModules, RedisFunctions, RedisScripts> }
+    const onDemand = {} as { db: RedisClientType }
     const concatenated = Buffer.concat(this.#speeches)
     const text = concatenated.toString()
     const last = { offset: Number.NaN } as { offset: number }
@@ -101,7 +102,7 @@ export class KoukokuParser implements Disposable {
       this.#dispatch('speech', { id, item })
       last.offset = (index as number) + matched[0].length
     }
-    await onDemand.db?.disconnect()
+    onDemand.db?.destroy()
     if (!Number.isNaN(last.offset)) {
       const speeches = this.#speeches.splice(0)
       const { byteLength } = Buffer.from(text.slice(0, last.offset))
