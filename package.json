@@ -7,7 +7,7 @@
   "devDependencies": {
     "@redis/client": "^5.0.1",
     "@types/eslint": "^9.6.1",
-    "@types/node": "^22.15.18",
+    "@types/node": "^22.15.19",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.25.4",
     "esbuild-register": "^3.6.0",
