@@ -5,7 +5,7 @@
   },
   "description": "Proxy for telnets://koukoku.shadan.open.ad.jp",
   "devDependencies": {
-    "@redis/client": "^5.0.1",
+    "@redis/client": "^5.1.0",
     "@types/eslint": "^9.6.1",
     "@types/node": "^22.15.19",
     "@types/ws": "^8.18.1",
