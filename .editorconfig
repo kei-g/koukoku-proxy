@@ -15,6 +15,7 @@ trim_trailing_whitespace = false
 [*.{css,html,js{,on},mjs,svg,ts,webmanifest,yml}]
 indent_size = 2
 indent_style = space
+tab_width = 2
 
 [*.ts]
 quote_type = single
