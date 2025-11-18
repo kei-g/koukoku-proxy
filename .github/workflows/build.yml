@@ -17,7 +17,7 @@ jobs:
       - name: Setup modules
         run: npm ci
       - name: Install ImageMagick
-        uses: mfinelli/setup-imagemagick@v6
+        uses: mfinelli/setup-imagemagick@v7
       - env:
           CI: ${{ vars.CI }}
         name: Preprocess

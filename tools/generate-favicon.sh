@@ -2,12 +2,16 @@
 
 set -e
 
+which magick > /dev/null \
+	&& convert=magick \
+	|| convert=convert
+
 srcfile=src/assets/favicon.png
 
 destdir=assets
 for size in 192 512; do
 	printf 'Generating android-chrome-%dx%d.png\n' $size $size
-	convert \
+	$convert \
 		$srcfile \
 		-background "rgb(29, 29, 29)" \
 		-define png:compression-level=9 \
@@ -18,7 +22,7 @@ for size in 192 512; do
 done
 
 printf 'Generating apple-touch-icon.png\n'
-convert \
+$convert \
 	$srcfile \
 	-background "rgb(29, 29, 29)" \
 	-define png:compression-level=9 \
@@ -29,7 +33,7 @@ convert \
 
 for size in 16 32; do
 	printf 'Generating favicon-%dx%d.png\n' $size $size
-	convert \
+	$convert \
 		$srcfile \
 		-define png:compression-level=9 \
 		-resize ${size}x$size \
@@ -39,7 +43,7 @@ for size in 16 32; do
 done
 
 printf 'Generating favicon.ico\n'
-convert \
+$convert \
 	$srcfile \
 	-define icon:auto-resize=32,16 \
 	-strip \
@@ -47,7 +51,7 @@ convert \
 	$destdir/favicon.ico
 
 printf 'Generating koukoku-ogp.png for an OGP image\n'
-convert \
+$convert \
 	$srcfile \
 	-background "rgb(29, 29, 29)" \
 	-flatten \
@@ -59,7 +63,7 @@ convert \
 	$destdir/koukoku-ogp.png
 
 printf 'Generating koukoku.png\n'
-convert \
+$convert \
 	$srcfile \
 	-define png:compression-level=9 \
 	-resize 112x112 \
